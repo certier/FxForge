@@ -47,7 +47,7 @@ class AndroidMcpBridge(
     @Volatile private var acceptThread: Thread? = null
     @Volatile private var bearerToken: String? = null
     @Volatile private var allowDeviceControl = false
-    private val workers = Executors.newFixedThreadPool(MAX_WORKERS)
+    @Volatile private var workers = Executors.newFixedThreadPool(MAX_WORKERS)
 
     @Synchronized
     fun start(allowControl: Boolean): AndroidMcpBridgeInfo {
@@ -63,6 +63,7 @@ class AndroidMcpBridge(
             return AndroidMcpBridgeInfo(current.localPort, currentToken)
         }
         return try {
+            if (workers.isShutdown) workers = Executors.newFixedThreadPool(MAX_WORKERS)
             val tokenBytes = ByteArray(32)
             SecureRandom().nextBytes(tokenBytes)
             val token = Base64.getUrlEncoder().withoutPadding().encodeToString(tokenBytes)
@@ -217,7 +218,7 @@ class AndroidMcpBridge(
                     .put("jsonrpc", "2.0")
                     .put("id", id)
                     .put("result", JSONObject()
-                        .put("protocolVersion", params.optString("protocolVersion", MCP_PROTOCOL_VERSION))
+                        .put("protocolVersion", MCP_PROTOCOL_VERSION)
                         .put("capabilities", JSONObject().put("tools", JSONObject()))
                         .put("serverInfo", JSONObject()
                             .put("name", "fxforge-android")
@@ -232,7 +233,15 @@ class AndroidMcpBridge(
                 val params = request.optJSONObject("params") ?: JSONObject()
                 val name = params.optString("name")
                 val arguments = params.optJSONObject("arguments") ?: JSONObject()
-                val result = callTool(name, arguments)
+                val result = try {
+                    callTool(name, arguments)
+                } catch (exception: Exception) {
+                    JSONObject()
+                        .put("content", JSONArray().put(
+                            JSONObject().put("type", "text").put("text", exception.message ?: "Android tool failed.")
+                        ))
+                        .put("isError", true)
+                }
                 JSONObject().put("jsonrpc", "2.0").put("id", id).put("result", result)
             }
             else -> jsonRpcError(id, -32601, "Method not found: " + request.optString("method"))
