@@ -497,7 +497,7 @@ class LinuxRuntimeManager(context: Context) {
 
     private fun isOpenCodeServerReady(password: String): Boolean {
         val connection = try {
-            URL("http://localhost:" + OPEN_CODE_PORT + "/global/health").openConnection() as HttpURLConnection
+            URL("http://localhost:" + OPEN_CODE_PORT + "/api/info").openConnection() as HttpURLConnection
         } catch (_: IOException) {
             return false
         }
