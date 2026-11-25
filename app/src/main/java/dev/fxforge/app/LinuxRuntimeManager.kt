@@ -170,7 +170,7 @@ class LinuxRuntimeManager(context: Context) {
     private fun prepareAptProotCompatibility() {
         val config = File(rootfsDirectory, "etc/apt/apt.conf.d/99fxforge-proot")
         config.parentFile?.mkdirs()
-        val contents = "APT::Sandbox::User \"root\";\\n"
+        val contents = "APT::Sandbox::User \"root\";\n"
         if (!config.isFile || config.readText() != contents) config.writeText(contents)
     }
 
