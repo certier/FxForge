@@ -26,26 +26,15 @@ jobs:
       - name: Install Android NDK for PRoot
         run: sdkmanager "ndk;28.2.13676358"
       - name: Build Android ARM64 PRoot
-        run: |
-          set -euo pipefail
-          mkdir -p proot-artifacts
-          NDK="$ANDROID_HOME/ndk/28.2.13676358" \
-          OUT="$RUNNER_TEMP/proot-build" \
-          REPO_ARTIFACT_DIR="$GITHUB_WORKSPACE/proot-artifacts" \
-          bash vendor/proot-static/tools/build-static-aarch64.sh
-          file proot-artifacts/proot
-          file proot-artifacts/loader
-          readelf -h proot-artifacts/proot
-          sha256sum proot-artifacts/*
-          mkdir -p app/src/main/jniLibs/arm64-v8a
-          install -m 0755 proot-artifacts/proot app/src/main/jniLibs/arm64-v8a/libfxforge_proot.so
-          install -m 0755 proot-artifacts/loader app/src/main/jniLibs/arm64-v8a/libfxforge_proot_loader.so
-          install -m 0755 proot-artifacts/loader32 app/src/main/jniLibs/arm64-v8a/libfxforge_proot_loader32.so
+        env:
+          ANDROID_NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/28.2.13676358
+          PROOT_SOURCE_DIR: vendor/proot-static
+        run: bash scripts/build-proot-android-arm64.sh
       - name: Upload Android PRoot binaries
         uses: actions/upload-artifact@v4
         with:
           name: fxforge-proot-android-arm64
-          path: proot-artifacts/*
+          path: app/src/main/jniLibs/arm64-v8a/*
           if-no-files-found: error
           retention-days: 14
       - uses: gradle/actions/setup-gradle@v4
