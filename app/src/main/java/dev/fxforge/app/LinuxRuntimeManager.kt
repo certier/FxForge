@@ -191,22 +191,22 @@ class LinuxRuntimeManager(context: Context) {
             requireCommandSuccess(sdkPackages, "Could not install Android SDK Platform 36 and Build Tools 36.0.0.")
             mutableSdkState.value = mutableSdkState.value.copy(phase = "Installing verified ARM64 build tools and Gradle")
             val nativeTools = runCommand(
-                "set -e; BT=/opt/android-sdk/build-tools/36.0.0; BASE=https://github.com/Commit451/android-arm-build-tools/releases/download/platform-tools-36.0.0; " +
-                    "curl -fL \"$BASE/aapt2\" -o \"$BT/aapt2\"; " +
-                    "echo '7512ff7e381bea6fd310b6f6e347422c8fda21e07c6e3f0162742e95eb9d7f98  '"$BT/aapt2\" | sha256sum -c -; " +
-                    "curl -fL \"$BASE/aidl\" -o \"$BT/aidl\"; " +
-                    "echo '8c97356b8bba8f7aad44cfd408e3ee24c66a1258244b5d08af1c9249f50dd659  '"$BT/aidl\" | sha256sum -c -; " +
-                    "curl -fL \"$BASE/zipalign\" -o \"$BT/zipalign\"; " +
-                    "echo 'e8856fb24b10095eb6e940c577ce96d89ddbfc45aa0f7eeaef1597ef68f11a12  '"$BT/zipalign\" | sha256sum -c -; " +
-                    "curl -fL \"$BASE/split-select\" -o \"$BT/split-select\"; " +
-                    "echo 'fb7f0c3c87dbd4243d7e1277ba64ded2399389244058b6a4c969cc615360766c  '"$BT/split-select\" | sha256sum -c -; " +
-                    "chmod 755 \"$BT/aapt2\" \"$BT/aidl\" \"$BT/zipalign\" \"$BT/split-select\"; " +
-                    "mkdir -p /opt/gradle /tmp/fxforge-gradle && " +
+                "set -e && " +
+                    "curl -fL https://github.com/Commit451/android-arm-build-tools/releases/download/platform-tools-36.0.0/aapt2 -o /opt/android-sdk/build-tools/36.0.0/aapt2 && " +
+                    "echo '7512ff7e381bea6fd310b6f6e347422c8fda21e07c6e3f0162742e95eb9d7f98  /opt/android-sdk/build-tools/36.0.0/aapt2' | sha256sum -c - && " +
+                    "curl -fL https://github.com/Commit451/android-arm-build-tools/releases/download/platform-tools-36.0.0/aidl -o /opt/android-sdk/build-tools/36.0.0/aidl && " +
+                    "echo '8c97356b8bba8f7aad44cfd408e3ee24c66a1258244b5d08af1c9249f50dd659  /opt/android-sdk/build-tools/36.0.0/aidl' | sha256sum -c - && " +
+                    "curl -fL https://github.com/Commit451/android-arm-build-tools/releases/download/platform-tools-36.0.0/zipalign -o /opt/android-sdk/build-tools/36.0.0/zipalign && " +
+                    "echo 'e8856fb24b10095eb6e940c577ce96d89ddbfc45aa0f7eeaef1597ef68f11a12  /opt/android-sdk/build-tools/36.0.0/zipalign' | sha256sum -c - && " +
+                    "curl -fL https://github.com/Commit451/android-arm-build-tools/releases/download/platform-tools-36.0.0/split-select -o /opt/android-sdk/build-tools/36.0.0/split-select && " +
+                    "echo 'fb7f0c3c87dbd4243d7e1277ba64ded2399389244058b6a4c969cc615360766c  /opt/android-sdk/build-tools/36.0.0/split-select' | sha256sum -c - && " +
+                    "chmod 755 /opt/android-sdk/build-tools/36.0.0/aapt2 /opt/android-sdk/build-tools/36.0.0/aidl /opt/android-sdk/build-tools/36.0.0/zipalign /opt/android-sdk/build-tools/36.0.0/split-select && " +
+                    "mkdir -p /opt/gradle && " +
                     "curl -fL --retry 3 https://services.gradle.org/distributions/gradle-8.13-bin.zip -o /tmp/gradle-8.13-bin.zip && " +
                     "echo '20f1b1176237254a6fc204d8434196fa11a4cfb387567519c61556e8710aed78  /tmp/gradle-8.13-bin.zip' | sha256sum -c - && " +
                     "unzip -q /tmp/gradle-8.13-bin.zip -d /opt/gradle && " +
-                    "rm -rf /tmp/fxforge-gradle /tmp/gradle-8.13-bin.zip && " +
-                    "\"$BT/aapt2\" version && /opt/gradle/gradle-8.13/bin/gradle --version",
+                    "rm -f /tmp/gradle-8.13-bin.zip && " +
+                    "/opt/android-sdk/build-tools/36.0.0/aapt2 version && /opt/gradle/gradle-8.13/bin/gradle --version",
                 timeoutSeconds = 1800
             )
             requireCommandSuccess(nativeTools, "Could not install ARM64 Android build tools or Gradle.")
