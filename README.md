@@ -108,3 +108,30 @@ and the accompanying license text in `third_party/licenses/`.
 
 The GitHub Actions workflow runs Android unit tests and assembles the debug APK
 using an installed Android SDK.
+
+
+## On-device workstation setup
+
+1. Open **Environment** and install Debian Bookworm ARM64. The root filesystem is
+   downloaded from a pinned source and SHA-256 verified before extraction.
+2. Install the Android SDK and ARM64 build tools. Review the linked Google SDK
+   terms and explicitly accept them in the app. This installs Java 17, Android
+   SDK Platform 36, Build Tools 36.0.0, and Gradle 8.13. The four native Linux
+   build-tools executables are downloaded from a pinned release and verified
+   against their SHA-256 digests.
+3. Open **Projects**, select or create an Android Gradle project, and choose
+   **Build debug APK**. FxForge copies the selected SAF folder into its private
+   Linux workspace, runs Gradle, and writes `FxForge-debug.apk` back into the
+   selected folder. Use the APK install action to install it through Shizuku.
+4. In **OpenCode**, install the CLI, choose a project folder, and start the
+   embedded server. OpenCode works in the private workspace; use **Sync** to
+   copy source changes back to the SAF folder.
+5. Connect Shizuku from **Device**. OpenCode's loopback MCP bridge exposes
+   device facts and logcat by default. The separate full-device-control toggle
+   adds shell execution, APK installation, and app launching through Shizuku.
+
+The Debian shell preserves the current directory and environment between
+commands. It is pipe-based rather than a kernel PTY, so interactive full-screen
+programs such as editors and terminal multiplexers are not supported. The
+Android SDK installer currently targets Java/Kotlin Gradle projects; an ARM64
+Android NDK toolchain is not included.
