@@ -11,6 +11,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.withContext
 import org.apache.commons.compress.archivers.tar.TarArchiveInputStream
 import org.apache.commons.compress.compressors.gzip.GzipCompressorInputStream
+import org.json.JSONObject
 import java.io.BufferedInputStream
 import java.io.File
 import java.io.FileInputStream
@@ -370,6 +371,50 @@ class LinuxRuntimeManager(context: Context) {
                 },
                 output = if (log.isFile) log.readText().takeLast(4000) else null
             )
+        }
+    }
+
+    suspend fun registerAndroidMcp(info: AndroidMcpBridgeInfo): String? = withContext(Dispatchers.IO) {
+        val password = openCodePassword
+            ?: return@withContext "OpenCode server credentials are unavailable."
+        val config = JSONObject()
+            .put("type", "remote")
+            .put("url", "http://127.0.0.1:" + info.port + "/mcp")
+            .put("oauth", false)
+            .put("codemode", false)
+            .put("headers", JSONObject().put("Authorization", "Bearer " + info.token))
+        val payload = JSONObject()
+            .put("name", "fxforge-android")
+            .put("config", config)
+        val connection = try {
+            URL("http://127.0.0.1:" + OPEN_CODE_PORT + "/mcp").openConnection() as HttpURLConnection
+        } catch (exception: IOException) {
+            return@withContext "Could not reach OpenCode MCP registration endpoint: " + (exception.message ?: "connection error")
+        }
+        try {
+            connection.connectTimeout = 3000
+            connection.readTimeout = 10_000
+            connection.requestMethod = "POST"
+            connection.doOutput = true
+            connection.setRequestProperty("Content-Type", "application/json")
+            val token = Base64.getEncoder().encodeToString(("opencode:" + password).toByteArray(Charsets.UTF_8))
+            connection.setRequestProperty("Authorization", "Basic " + token)
+            connection.outputStream.use { it.write(payload.toString().toByteArray(Charsets.UTF_8)) }
+            val code = connection.responseCode
+            if (code in 200..299) {
+                null
+            } else {
+                val detail = try {
+                    connection.errorStream?.bufferedReader()?.use { it.readText() }.orEmpty()
+                } catch (_: IOException) {
+                    ""
+                }
+                "OpenCode rejected the Android MCP bridge (HTTP " + code + "). " + detail.take(1000)
+            }
+        } catch (exception: IOException) {
+            "Could not register the Android MCP bridge: " + (exception.message ?: "HTTP error")
+        } finally {
+            connection.disconnect()
         }
     }
 
