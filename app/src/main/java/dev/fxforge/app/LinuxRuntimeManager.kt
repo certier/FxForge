@@ -220,6 +220,25 @@ class LinuxRuntimeManager(context: Context) {
         }
         if (ready && process.isAlive) {
             mutableOpenCodeState.value = OpenCodeState(installed = true, running = true)
+            Thread({
+                val exitCode = try {
+                    process.waitFor()
+                } catch (_: InterruptedException) {
+                    Thread.currentThread().interrupt()
+                    -1
+                }
+                if (openCodeProcess === process) {
+                    openCodeProcess = null
+                    openCodePassword = null
+                    mutableOpenCodeState.value = OpenCodeState(
+                        installed = openCodeBinary.isFile,
+                        error = "OpenCode server stopped with exit code " + exitCode + "."
+                    )
+                }
+            }, "fxforge-opencode-monitor").apply {
+                isDaemon = true
+                start()
+            }
         } else {
             process.destroyForcibly()
             openCodeProcess = null
@@ -238,6 +257,7 @@ class LinuxRuntimeManager(context: Context) {
 
     suspend fun stopOpenCode() = withContext(Dispatchers.IO) {
         val process = openCodeProcess
+        openCodeProcess = null
         if (process != null && process.isAlive) {
             process.destroy()
             if (!process.waitFor(3, TimeUnit.SECONDS)) process.destroyForcibly()
