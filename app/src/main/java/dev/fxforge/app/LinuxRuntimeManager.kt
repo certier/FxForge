@@ -284,6 +284,16 @@ class LinuxRuntimeManager(context: Context) {
         }
     }
 
+    suspend fun verifyAndroidToolchain(): LinuxCommandResult {
+        if (!androidSdkMarker.isFile) {
+            return LinuxCommandResult("", null, false, "Install the Android SDK first.")
+        }
+        return runCommand(
+            "set -e; aapt2 version; aidl --version; zipalign -h >/dev/null 2>&1 || true; split-select --help >/dev/null 2>&1 || true; gradle --version | head -n 4; java -version",
+            timeoutSeconds = 120
+        )
+    }
+
     suspend fun installOpenCode() = withContext(Dispatchers.IO) {
         if (!markerFile.isFile) {
             mutableOpenCodeState.value = mutableOpenCodeState.value.copy(
