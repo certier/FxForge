@@ -1317,6 +1317,7 @@ private fun EnvironmentScreen(padding: PaddingValues, linuxRuntimeManager: Linux
     var prootProbe by remember { mutableStateOf<ProotProbeResult?>(null) }
     val linuxState by linuxRuntimeManager.state.collectAsState()
     val sdkState by linuxRuntimeManager.androidSdkState.collectAsState()
+    val openCodeState by linuxRuntimeManager.openCodeState.collectAsState()
     var showSdkLicense by remember { mutableStateOf(false) }
     var linuxCommand by remember { mutableStateOf("uname -a && cat /etc/os-release") }
     var runningLinuxCommand by remember { mutableStateOf(false) }
@@ -1331,8 +1332,13 @@ private fun EnvironmentScreen(padding: PaddingValues, linuxRuntimeManager: Linux
         "App private storage" to context.filesDir.absolutePath,
         "Bundled PRoot binary" to if (ProotBinaryRuntime.isBundled(context)) "ARM64 executable and loader extracted" else "Unavailable for this ABI",
         "Android SDK" to if (sdkState.installed) "API 36 · ARM64 Build Tools · Gradle 8.13" else "Not installed",
-        "Linux userland / PTY" to if (linuxState.installed) "Debian Bookworm ARM64 installed · persistent PTY not available" else "Not installed",
-        "OpenCode" to "Not installed",
+        "Linux shell" to if (linuxState.installed) "Persistent Debian Bash session · no kernel PTY" else "Not installed",
+        "OpenCode" to when {
+            openCodeState.running -> "Running · localhost:4096"
+            openCodeState.installing -> "Installing"
+            openCodeState.installed -> "Installed"
+            else -> "Not installed"
+        },
         "Android SDK build tools" to if (sdkState.installed) "ARM64 AAPT2, AIDL, ZIPALIGN, split-select" else "Not installed"
     )
     if (showSdkLicense) {
