@@ -42,6 +42,7 @@ dependencies {
     implementation("androidx.documentfile:documentfile:1.0.1")
     implementation("io.github.rosemoe:editor:0.24.6")
     implementation("io.github.rosemoe:language-java:0.24.6")
+    implementation("org.apache.commons:commons-compress:1.28.0")
     implementation(platform("androidx.compose:compose-bom:2025.10.00"))
     implementation("androidx.compose.foundation:foundation")
     implementation("androidx.compose.material3:material3")
