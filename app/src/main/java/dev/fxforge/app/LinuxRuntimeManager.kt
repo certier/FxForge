@@ -68,7 +68,7 @@ class LinuxRuntimeManager(context: Context) {
     private val markerFile = File(rootfsDirectory, ".fxforge-rootfs-version")
     private val downloadFile = File(appContext.cacheDir, "debian-bookworm-arm64.tar.gz")
     private val openCodeBinary = File(rootfsDirectory, "root/.opencode/bin/opencode")
-    private var openCodeProcess: Process? = null
+    @Volatile private var openCodeProcess: Process? = null
     @Volatile private var openCodePassword: String? = null
     private val mutableOpenCodeState = MutableStateFlow(OpenCodeState(installed = openCodeBinary.isFile))
     val openCodeState: StateFlow<OpenCodeState> = mutableOpenCodeState.asStateFlow()
