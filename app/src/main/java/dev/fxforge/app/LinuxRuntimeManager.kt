@@ -122,6 +122,7 @@ class LinuxRuntimeManager(context: Context) {
     private val downloadFile = File(appContext.cacheDir, "debian-bookworm-arm64.tar.gz")
     private val openCodeBinary = File(rootfsDirectory, "root/.opencode/bin/opencode")
     private val androidSdkMarker = File(rootfsDirectory, "opt/android-sdk/.fxforge-sdk-version")
+    private val developerToolsMarker = File(rootfsDirectory, "opt/android-sdk/.fxforge-developer-tools-version")
     private val mutableSdkState = MutableStateFlow(
         AndroidSdkState(
             installed = androidSdkMarker.isFile,
@@ -129,6 +130,8 @@ class LinuxRuntimeManager(context: Context) {
         )
     )
     val androidSdkState: StateFlow<AndroidSdkState> = mutableSdkState.asStateFlow()
+
+    fun areDeveloperToolsInstalled(): Boolean = developerToolsMarker.isFile
     @Volatile private var openCodeProcess: Process? = null
     @Volatile private var openCodePassword: String? = null
     private val mutableOpenCodeState = MutableStateFlow(OpenCodeState(installed = openCodeBinary.isFile))
@@ -196,6 +199,27 @@ class LinuxRuntimeManager(context: Context) {
             return@withContext
         }
         if (androidSdkMarker.isFile) {
+            if (!developerToolsMarker.isFile) {
+                mutableSdkState.value = AndroidSdkState(
+                    installed = true,
+                    installing = true,
+                    phase = "Installing Git and developer CLI tools"
+                )
+                val developerTools = runCommand(
+                    "apt-get -qq update && DEBIAN_FRONTEND=noninteractive apt-get -qq install -y git openssh-client ripgrep jq procps file rsync",
+                    timeoutSeconds = 900
+                )
+                if (developerTools.error != null || developerTools.exitCode != 0) {
+                    mutableSdkState.value = AndroidSdkState(
+                        installed = true,
+                        phase = "Android SDK installed · developer tools need attention",
+                        error = developerTools.error ?: developerTools.output.takeLast(1200)
+                    )
+                    return@withContext
+                }
+                developerToolsMarker.parentFile?.mkdirs()
+                developerToolsMarker.writeText("git\nopenssh-client\nripgrep\njq\nprocps\nfile\nrsync\n")
+            }
             mutableSdkState.value = AndroidSdkState(installed = true, phase = "Android SDK installed")
             return@withContext
         }
@@ -213,6 +237,8 @@ class LinuxRuntimeManager(context: Context) {
                 timeoutSeconds = 900
             )
             requireCommandSuccess(prerequisites, "Could not install Java and SDK prerequisites.")
+            developerToolsMarker.parentFile?.mkdirs()
+            developerToolsMarker.writeText("git\nopenssh-client\nripgrep\njq\nprocps\nfile\nrsync\n")
             mutableSdkState.value = mutableSdkState.value.copy(phase = "Downloading Android command-line tools")
             val tools = runCommand(
                 "mkdir -p /opt/android-sdk/cmdline-tools /tmp/fxforge-sdk-tools && " +
