@@ -92,16 +92,6 @@ object ProjectWorkspaceSync {
             (child.isDirectory && child.name in ignoredDirectoryNames) ||
                 (child.isFile && child.name in ignoredFileNames)
         }
-        val includedNames = included.map { it.name }.toSet()
-        destination.listFiles().forEach { existing ->
-            val name = existing.name ?: return@forEach
-            if (existing.isDirectory && name in ignoredDirectoryNames) return@forEach
-            if (existing.isFile && name in ignoredFileNames) return@forEach
-            if (existing.isFile && name.endsWith(".apk", ignoreCase = true)) return@forEach
-            if (name !in includedNames) {
-                deleteSafTree(existing)
-            }
-        }
         included.forEach { child ->
             val name = child.name
             if (name.isBlank() || name == "." || name == ".." || name.contains('/') || name.contains('\\')) {
