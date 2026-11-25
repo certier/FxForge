@@ -435,42 +435,77 @@ class LinuxRuntimeManager(context: Context) {
             .put("type", "remote")
             .put("url", "http://localhost:" + info.port + "/mcp")
             .put("oauth", false)
-            .put("enabled", true)
+            .put("disabled", false)
             .put("codemode", false)
-            .put("timeout", 120000)
+            .put("timeout", JSONObject().put("catalog", 120000).put("execution", 120000))
+            .put("protocol", "legacy")
             .put("headers", JSONObject().put("Authorization", "Bearer " + info.token))
-        val payload = JSONObject()
-            .put("name", "fxforge-android")
-            .put("config", config)
-        val connection = try {
-            URL("http://localhost:" + OPEN_CODE_PORT + "/mcp").openConnection() as HttpURLConnection
+        val payload = JSONObject().put("config", config)
+        val token = Base64.getEncoder().encodeToString(("opencode:" + password).toByteArray(Charsets.UTF_8))
+        val registration = try {
+            URL("http://localhost:" + OPEN_CODE_PORT + "/api/experimental/mcp/fxforge-android")
+                .openConnection() as HttpURLConnection
         } catch (exception: IOException) {
-            return@withContext "Could not reach OpenCode MCP registration endpoint: " + (exception.message ?: "connection error")
+            return@withContext "Could not reach OpenCode's MCP registration API: " + (exception.message ?: "connection error")
         }
         try {
-            connection.connectTimeout = 3000
-            connection.readTimeout = 10_000
-            connection.requestMethod = "POST"
-            connection.doOutput = true
-            connection.setRequestProperty("Content-Type", "application/json")
-            val token = Base64.getEncoder().encodeToString(("opencode:" + password).toByteArray(Charsets.UTF_8))
-            connection.setRequestProperty("Authorization", "Basic " + token)
-            connection.outputStream.use { it.write(payload.toString().toByteArray(Charsets.UTF_8)) }
-            val code = connection.responseCode
-            if (code in 200..299) {
-                null
-            } else {
+            registration.connectTimeout = 5000
+            registration.readTimeout = 15000
+            registration.requestMethod = "PUT"
+            registration.doOutput = true
+            registration.setRequestProperty("Content-Type", "application/json")
+            registration.setRequestProperty("Authorization", "Basic " + token)
+            registration.outputStream.use { it.write(payload.toString().toByteArray(Charsets.UTF_8)) }
+            val code = registration.responseCode
+            if (code !in 200..299) {
                 val detail = try {
-                    connection.errorStream?.bufferedReader()?.use { it.readText() }.orEmpty()
+                    registration.errorStream?.bufferedReader()?.use { it.readText() }.orEmpty()
                 } catch (_: IOException) {
                     ""
                 }
-                "OpenCode rejected the Android MCP bridge (HTTP " + code + "). " + detail.take(1000)
+                return@withContext "OpenCode rejected the Android MCP server (HTTP " + code + "). " + detail.take(1000)
             }
         } catch (exception: IOException) {
-            "Could not register the Android MCP bridge: " + (exception.message ?: "HTTP error")
+            return@withContext "Could not register the Android MCP bridge: " + (exception.message ?: "HTTP error")
         } finally {
-            connection.disconnect()
+            registration.disconnect()
+        }
+
+        val statusConnection = try {
+            URL("http://localhost:" + OPEN_CODE_PORT + "/api/mcp").openConnection() as HttpURLConnection
+        } catch (exception: IOException) {
+            return@withContext "The Android MCP server was registered, but its connection status could not be checked."
+        }
+        try {
+            statusConnection.connectTimeout = 5000
+            statusConnection.readTimeout = 10000
+            statusConnection.setRequestProperty("Authorization", "Basic " + token)
+            val code = statusConnection.responseCode
+            if (code !in 200..299) {
+                return@withContext "The Android MCP server was registered, but OpenCode status returned HTTP " + code + "."
+            }
+            val body = statusConnection.inputStream.bufferedReader().use { it.readText() }
+            val servers = JSONObject(body).optJSONArray("data") ?: JSONArray()
+            for (index in 0 until servers.length()) {
+                val server = servers.optJSONObject(index) ?: continue
+                if (server.optString("name") == "fxforge-android") {
+                    return@withContext when (server.optJSONObject("status")?.optString("status")) {
+                        "connected" -> null
+                        "pending" -> "Android MCP server is registered and still connecting."
+                        "disabled" -> "Android MCP server is registered but disabled in OpenCode."
+                        "needs_auth" -> "Android MCP server requires authentication."
+                        "failed" -> "Android MCP connection failed: " +
+                            (server.optJSONObject("status")?.optString("error") ?: "unknown error")
+                        else -> "Android MCP server is registered, but OpenCode returned an unknown status."
+                    }
+                }
+            }
+            "OpenCode accepted the Android MCP configuration but did not list the server."
+        } catch (exception: IOException) {
+            "The Android MCP server was registered, but status verification failed: " +
+                (exception.message ?: "HTTP error")
+        } finally {
+            statusConnection.disconnect()
         }
     }
 
