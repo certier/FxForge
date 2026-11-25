@@ -1,8 +1,10 @@
 package dev.fxforge.app
 
 import android.content.Context
+import android.content.Intent
 import android.os.Build
 import android.os.StatFs
+import android.net.Uri
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -70,6 +72,13 @@ data class AndroidBuildResult(
     val error: String? = null
 )
 
+data class WorkspaceState(
+    val selected: Boolean = false,
+    val name: String? = null,
+    val syncing: Boolean = false,
+    val error: String? = null
+)
+
 private object DebianRootfs {
     const val ARCHIVE_SIZE = 28_144_305L
     const val SHA256 = "7f1aa0b5c351d0542b2066749ed47608e5873bcdd1fd14f4df6f0a05cac02f8e"
@@ -80,6 +89,15 @@ private object DebianRootfs {
 class LinuxRuntimeManager(context: Context) {
     private val appContext = context.applicationContext
     private val runtimeDirectory = File(appContext.filesDir, "linux")
+    private val workspaceDirectory = File(appContext.filesDir, "workspaces/active")
+    private val workspacePreferences = appContext.getSharedPreferences("linux_workspace", Context.MODE_PRIVATE)
+    private val mutableWorkspaceState = MutableStateFlow(
+        WorkspaceState(
+            selected = workspacePreferences.getString("tree_uri", null) != null,
+            name = workspacePreferences.getString("tree_name", null)
+        )
+    )
+    val workspaceState: StateFlow<WorkspaceState> = mutableWorkspaceState.asStateFlow()
     private val rootfsDirectory = File(runtimeDirectory, DebianRootfs.VERSION)
     private val markerFile = File(rootfsDirectory, ".fxforge-rootfs-version")
     private val downloadFile = File(appContext.cacheDir, "debian-bookworm-arm64.tar.gz")
@@ -288,6 +306,8 @@ class LinuxRuntimeManager(context: Context) {
         val password = openCodePassword ?: createOpenCodePassword().also { openCodePassword = it }
         val temporaryDirectory = File(appContext.cacheDir, "proot-tmp")
         if (!temporaryDirectory.exists()) temporaryDirectory.mkdirs()
+        workspaceDirectory.mkdirs()
+        File(rootfsDirectory, "workspace").mkdirs()
         val binary = File(appContext.applicationInfo.nativeLibraryDir, PROOT_BINARY)
         val loader = File(appContext.applicationInfo.nativeLibraryDir, PROOT_LOADER)
         val loader32 = File(appContext.applicationInfo.nativeLibraryDir, PROOT_LOADER_32)
@@ -300,7 +320,8 @@ class LinuxRuntimeManager(context: Context) {
                 "-b", "/dev",
                 "-b", "/proc",
                 "-b", "/sys",
-                "-w", "/root",
+                "-b", workspaceDirectory.absolutePath + ":/workspace",
+                "-w", "/workspace",
                 "/usr/bin/env",
                 "HOME=/root",
                 "PATH=/root/.opencode/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
@@ -488,6 +509,55 @@ class LinuxRuntimeManager(context: Context) {
         }
     }
 
+    suspend fun syncWorkspaceFromSaf(source: androidx.documentfile.provider.DocumentFile) =
+        withContext(Dispatchers.IO) {
+            if (!source.isDirectory || !source.canRead()) {
+                mutableWorkspaceState.value = mutableWorkspaceState.value.copy(
+                    error = "The selected workspace folder cannot be read."
+                )
+                return@withContext
+            }
+            mutableWorkspaceState.value = mutableWorkspaceState.value.copy(syncing = true, error = null)
+            try {
+                ProjectWorkspaceSync.copyFromSaf(appContext, source, workspaceDirectory)
+                workspacePreferences.edit()
+                    .putString("tree_uri", source.uri.toString())
+                    .putString("tree_name", source.name ?: "Android project")
+                    .apply()
+                mutableWorkspaceState.value = WorkspaceState(
+                    selected = true,
+                    name = source.name ?: "Android project"
+                )
+            } catch (exception: Exception) {
+                mutableWorkspaceState.value = mutableWorkspaceState.value.copy(
+                    syncing = false,
+                    error = exception.message ?: "Could not copy the project into the Linux workspace."
+                )
+            }
+        }
+
+    suspend fun syncWorkspaceToSaf() = withContext(Dispatchers.IO) {
+        val uri = workspacePreferences.getString("tree_uri", null)
+        if (uri.isNullOrBlank()) {
+            mutableWorkspaceState.value = mutableWorkspaceState.value.copy(
+                error = "Choose a project folder before syncing changes."
+            )
+            return@withContext
+        }
+        mutableWorkspaceState.value = mutableWorkspaceState.value.copy(syncing = true, error = null)
+        try {
+            val destination = androidx.documentfile.provider.DocumentFile.fromTreeUri(appContext, Uri.parse(uri))
+                ?: throw IOException("The saved workspace folder is no longer available.")
+            ProjectWorkspaceSync.copyToSaf(appContext, workspaceDirectory, destination)
+            mutableWorkspaceState.value = mutableWorkspaceState.value.copy(syncing = false, error = null)
+        } catch (exception: Exception) {
+            mutableWorkspaceState.value = mutableWorkspaceState.value.copy(
+                syncing = false,
+                error = exception.message ?: "Could not sync project changes back to Android storage."
+            )
+        }
+    }
+
     suspend fun buildProject(projectRoot: androidx.documentfile.provider.DocumentFile): AndroidBuildResult =
         withContext(Dispatchers.IO) {
             if (!androidSdkMarker.isFile) {
@@ -501,8 +571,11 @@ class LinuxRuntimeManager(context: Context) {
             if (!hasSettings) {
                 return@withContext AndroidBuildResult(false, "", error = "The selected folder is not a Gradle project. A settings.gradle or settings.gradle.kts file is required.")
             }
-            val workspace = File(appContext.filesDir, "workspaces/active")
+            val workspace = workspaceDirectory
             try {
+                if (workspacePreferences.getString("tree_uri", null) == projectRoot.uri.toString() && workspace.isDirectory) {
+                    ProjectWorkspaceSync.copyToSaf(appContext, workspace, projectRoot)
+                }
                 ProjectWorkspaceSync.copyFromSaf(appContext, projectRoot, workspace)
                 File(workspace, "local.properties").writeText("sdk.dir=/opt/android-sdk\n")
                 File(rootfsDirectory, "workspace").mkdirs()
