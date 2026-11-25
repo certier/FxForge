@@ -2,6 +2,7 @@ package dev.fxforge.app
 
 import android.content.Context
 import android.os.Build
+import android.os.StatFs
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -75,6 +76,13 @@ class LinuxRuntimeManager(context: Context) {
         }
         if (markerFile.isFile) {
             mutableState.value = LinuxRuntimeState(installed = true, phase = "Debian installed")
+            return@withContext
+        }
+        val availableBytes = StatFs(appContext.filesDir.absolutePath).availableBytes
+        if (availableBytes < MIN_FREE_SPACE_BYTES) {
+            mutableState.value = mutableState.value.copy(
+                error = "Debian installation needs at least 160 MiB of free app storage."
+            )
             return@withContext
         }
         mutableState.value = LinuxRuntimeState(installing = true, phase = "Preparing Debian download")
@@ -291,13 +299,14 @@ class LinuxRuntimeManager(context: Context) {
                         destination.parentFile?.mkdirs()
                         if (Files.exists(destination.toPath()) || Files.isSymbolicLink(destination.toPath())) destination.delete()
                         val linkName = entry.linkName.removePrefix("./").trimStart('/')
-                        val target = File(stagingDirectory, linkName)
-                        if (target.exists()) {
-                            try {
-                                Files.createLink(destination.toPath(), target.toPath())
-                            } catch (_: IOException) {
-                                target.copyTo(destination, overwrite = true)
-                            }
+                        val target = File(stagingDirectory, linkName).canonicalFile
+                        if (!target.path.startsWith(stagingCanonical.path + File.separator) || !target.isFile) {
+                            throw IOException("Debian archive contains an invalid hard link.")
+                        }
+                        try {
+                            Files.createLink(destination.toPath(), target.toPath())
+                        } catch (_: IOException) {
+                            target.copyTo(destination, overwrite = true)
                         }
                     }
                     entry.isFile -> {
@@ -332,6 +341,7 @@ class LinuxRuntimeManager(context: Context) {
         if (Files.isSymbolicLink(resolv.toPath())) resolv.delete()
         resolv.writeText("nameserver 1.1.1.1\nnameserver 8.8.8.8\n")
         File(etc, "hosts").apply {
+            if (Files.isSymbolicLink(toPath())) delete()
             if (!exists()) writeText("127.0.0.1 localhost\n::1 localhost ip6-localhost\n")
         }
         File(stagingDirectory, ".fxforge-rootfs-version").writeText(DebianRootfs.VERSION)
@@ -352,6 +362,7 @@ class LinuxRuntimeManager(context: Context) {
         private const val MAX_COMMAND_CHARS = 8192
         private const val MAX_OUTPUT_CHARS = 64 * 1024
         private const val MAX_COMMAND_TIMEOUT_SECONDS = 60
+        private const val MIN_FREE_SPACE_BYTES = 160L * 1024L * 1024L
         private const val CONNECT_TIMEOUT_MS = 20_000
         private const val READ_TIMEOUT_MS = 60_000
         private const val DOWNLOAD_BUFFER_SIZE = 64 * 1024
