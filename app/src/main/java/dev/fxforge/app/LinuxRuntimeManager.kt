@@ -142,7 +142,7 @@ class LinuxRuntimeManager(context: Context) {
         }
         mutableOpenCodeState.value = OpenCodeState(installing = true)
         val installResult = runCommand(
-            "apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y ca-certificates curl git && curl -fsSL https://opencode.ai/v2/install | bash && /root/.opencode/bin/opencode --version",
+            "apt-get -qq update && DEBIAN_FRONTEND=noninteractive apt-get -qq install -y ca-certificates curl git && curl -fsSL https://opencode.ai/v2/install | bash && /root/.opencode/bin/opencode --version",
             timeoutSeconds = 900
         )
         val installed = openCodeBinary.isFile
@@ -288,10 +288,11 @@ class LinuxRuntimeManager(context: Context) {
                             val count = input.read(buffer)
                             if (count < 0) break
                             val remaining = MAX_SERVER_LOG_BYTES - total
-                            if (remaining <= 0) break
-                            val writeCount = minOf(count, remaining)
-                            output.write(buffer, 0, writeCount)
-                            total += writeCount
+                            if (remaining > 0) {
+                                val writeCount = minOf(count, remaining)
+                                output.write(buffer, 0, writeCount)
+                                total += writeCount
+                            }
                         }
                     }
                 }
