@@ -423,7 +423,25 @@ private fun OpenCodeScreen(
     val state by runtimeManager.openCodeState.collectAsState()
     val linuxState by runtimeManager.state.collectAsState()
     val mcpState by androidMcpBridge.state.collectAsState()
+    val workspaceState by runtimeManager.workspaceState.collectAsState()
+    val context = LocalContext.current
     val scope = rememberCoroutineScope()
+    val workspacePicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
+        if (uri != null) {
+            try {
+                context.contentResolver.takePersistableUriPermission(
+                    uri,
+                    Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+                )
+                val root = DocumentFile.fromTreeUri(context, uri)
+                if (root != null) {
+                    scope.launch { runtimeManager.syncWorkspaceFromSaf(root) }
+                }
+            } catch (exception: SecurityException) {
+                // The workspace state reports the access failure after the next sync attempt.
+            }
+        }
+    }
     var allowDeviceControl by remember { mutableStateOf(false) }
     var mcpError by remember { mutableStateOf<String?>(null) }
     var webView by remember { mutableStateOf<WebView?>(null) }
@@ -448,18 +466,27 @@ private fun OpenCodeScreen(
                 Column {
                     Text("OpenCode · localhost:4096", fontWeight = FontWeight.SemiBold)
                     Text(
-                        if (mcpState.running) {
+                        (workspaceState.name ?: "No project workspace") + " · " +
+                            if (mcpState.running) {
                             if (mcpState.allowDeviceControl) "Android tools · full device control enabled"
                             else "Android tools · read-only mode"
                         } else "Android tools disconnected",
                         style = MaterialTheme.typography.bodySmall
                     )
                 }
-                TextButton(onClick = {
-                    androidMcpBridge.stop()
-                    scope.launch { runtimeManager.stopOpenCode() }
-                }) {
-                    Text("Stop")
+                Column(horizontalAlignment = androidx.compose.ui.Alignment.End) {
+                    TextButton(
+                        enabled = workspaceState.selected && !workspaceState.syncing,
+                        onClick = { scope.launch { runtimeManager.syncWorkspaceToSaf() } }
+                    ) {
+                        Text(if (workspaceState.syncing) "Syncing…" else "Sync")
+                    }
+                    TextButton(onClick = {
+                        androidMcpBridge.stop()
+                        scope.launch { runtimeManager.stopOpenCode() }
+                    }) {
+                        Text("Stop")
+                    }
                 }
             }
             AndroidView(
@@ -508,7 +535,7 @@ private fun OpenCodeScreen(
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
             Text("OpenCode", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
-            Text("OpenCode runs as a Linux ARM64 process inside the Debian environment. FxForge embeds its local web interface in this screen.")
+            Text("OpenCode runs as a Linux ARM64 process inside Debian. Its project files live in FxForge's private workspace and can be synchronized with a SAF folder.")
             InfoCard(
                 "OpenCode status",
                 when {
@@ -521,6 +548,26 @@ private fun OpenCodeScreen(
             )
             state.error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
             mcpError?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+            InfoCard(
+                "Project workspace",
+                workspaceState.name ?: "No folder selected. OpenCode will start in an empty private workspace."
+            )
+            workspaceState.error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Button(
+                    enabled = !workspaceState.syncing && !state.starting,
+                    onClick = { workspacePicker.launch(null) }
+                ) {
+                    Text(if (workspaceState.selected) "Change workspace" else "Choose project folder")
+                }
+                Button(
+                    enabled = workspaceState.selected && !workspaceState.syncing,
+                    onClick = { scope.launch { runtimeManager.syncWorkspaceToSaf() } }
+                ) {
+                    Text(if (workspaceState.syncing) "Syncing…" else "Sync changes")
+                }
+            }
+            if (workspaceState.syncing) CircularProgressIndicator()
             if (!state.installed) {
                 Button(
                     enabled = !state.installing && linuxState.installed,
