@@ -731,6 +731,38 @@ private fun ProjectsScreen(
             )
         }
     }
+    if (showSdkLicense) {
+        AlertDialog(
+            onDismissRequest = { showSdkLicense = false },
+            title = { Text("Android SDK license") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(
+                        "FxForge will download Google's Android command-line tools, Android SDK Platform 36, and Build Tools 36.0.0. It will accept the SDK licenses only after your confirmation."
+                    )
+                    Text("The ARM64 native build tools and Gradle 8.13 will be checksum-verified before use. Keep at least 4 GiB free.")
+                    TextButton(onClick = {
+                        context.startActivity(
+                            Intent(Intent.ACTION_VIEW, "https://developer.android.com/studio/terms".toUri())
+                        )
+                    }) {
+                        Text("Read Android SDK terms")
+                    }
+                }
+            },
+            confirmButton = {
+                Button(onClick = {
+                    showSdkLicense = false
+                    scope.launch { linuxRuntimeManager.installAndroidSdk() }
+                }) {
+                    Text("I agree and install")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showSdkLicense = false }) { Text("Cancel") }
+            }
+        )
+    }
     if (showCreateProject) {
         val validationError = ProjectScaffolder.validate(projectName.trim(), packageName.trim())
         AlertDialog(
@@ -942,6 +974,8 @@ private fun EnvironmentScreen(padding: PaddingValues, linuxRuntimeManager: Linux
     var probingProot by remember { mutableStateOf(false) }
     var prootProbe by remember { mutableStateOf<ProotProbeResult?>(null) }
     val linuxState by linuxRuntimeManager.state.collectAsState()
+    val sdkState by linuxRuntimeManager.androidSdkState.collectAsState()
+    var showSdkLicense by remember { mutableStateOf(false) }
     var linuxCommand by remember { mutableStateOf("uname -a && cat /etc/os-release") }
     var runningLinuxCommand by remember { mutableStateOf(false) }
     var linuxCommandResult by remember { mutableStateOf<LinuxCommandResult?>(null) }
@@ -954,7 +988,8 @@ private fun EnvironmentScreen(padding: PaddingValues, linuxRuntimeManager: Linux
         "App storage allocatable" to allocatableBytes(context),
         "App private storage" to context.filesDir.absolutePath,
         "Bundled PRoot binary" to if (ProotBinaryRuntime.isBundled(context)) "ARM64 executable and loader extracted" else "Unavailable for this ABI",
-        "Linux userland / PTY" to "Not installed",
+        "Android SDK" to if (sdkState.installed) "API 36 · ARM64 Build Tools · Gradle 8.13" else "Not installed",
+        "Linux userland / PTY" to "Debian installed · persistent PTY not available",
         "OpenCode" to "Not installed",
         "Android SDK build tools" to "Not installed in this app"
     )
@@ -1039,6 +1074,33 @@ private fun EnvironmentScreen(padding: PaddingValues, linuxRuntimeManager: Linux
                     }
                 }
             }
+        }
+        item {
+            Text("Android app build toolchain", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
+            InfoCard(
+                "SDK status",
+                when {
+                    sdkState.installed -> "Android SDK 36, ARM64 Build Tools 36.0.0, Java 17, and Gradle 8.13 are installed."
+                    sdkState.installing -> sdkState.phase
+                    else -> "Not installed. The first setup downloads Android command-line tools and SDK packages; allow several gigabytes of free storage."
+                }
+            )
+            sdkState.error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+            if (sdkState.installing) {
+                CircularProgressIndicator()
+                Text(sdkState.phase)
+            } else if (!sdkState.installed) {
+                Button(
+                    enabled = linuxState.installed,
+                    onClick = { showSdkLicense = true }
+                ) {
+                    Text("Install Android SDK and ARM64 build tools")
+                }
+                if (!linuxState.installed) {
+                    Text("Install Debian first.")
+                }
+            }
+            sdkState.output?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
         }
         item {
             Button(
