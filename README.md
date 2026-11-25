@@ -3,20 +3,19 @@
 FxForge is an independent Android development-workstation project. It is not
 affiliated with the OpenCode team.
 
-> **Current status:** this repository contains a native Android application
-> foundation, persistent Storage Access Framework (SAF) project-folder selection
-> and browser, a Kotlin + Jetpack Compose Android project scaffold generator,
-> a Sora text editor for UTF-8 files up to 2 MiB, Shizuku binder/permission/
-> privilege reporting, device diagnostics, bounded logcat capture, a user-
-> initiated Android shell command console, and user-confirmed APK installation.
-> The ARM64 APK build embeds a PRoot executable and its loaders, built from
-> pinned source with the Android NDK. This is only the container engine: a
-> Linux root filesystem, persistent PTY, and OpenCode are not yet installed.
-> The shell console starts a fresh `/system/bin/sh` process per command through
-> Shizuku. It is bounded to 60 seconds, 8 KiB of command text, and 64 KiB of
-> output; it is **not** a persistent PTY. The app does **not** yet contain an
-> installed Linux userland, OpenCode runtime, persistent PTY terminal, in-app
-> Android SDK installer/build toolchain, Git integration, or Android MCP bridge.
+> **Current status:** FxForge now includes a native Android app, SAF project
+> browser/editor, Kotlin + Compose project scaffolder, Shizuku device diagnostics,
+> bounded logcat, user-initiated Android shell commands, APK installation, and
+> a build pipeline that packages an ARM64 PRoot executable. The Environment
+> screen can install a checksum-pinned Debian Bookworm ARM64 root filesystem,
+> Java 17, Android SDK Platform 36, ARM64 Build Tools 36.0.0, and Gradle 8.13.
+> Projects can be synchronized from SAF into the private Linux workspace and
+> built into a debug APK. OpenCode can be installed in Debian and launched as a
+> local server with its web interface embedded in the app. The Android shell
+> console still starts a fresh `/system/bin/sh` process per command; it is not
+> a persistent PTY. Physical-device validation of the PRoot, Debian, SDK, and
+> OpenCode runtime is still required. The Android MCP bridge and a persistent
+> PTY terminal are not implemented yet.
 
 ## Build the Android app
 
