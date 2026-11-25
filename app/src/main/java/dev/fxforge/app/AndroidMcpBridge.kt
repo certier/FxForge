@@ -207,7 +207,10 @@ class AndroidMcpBridge(
         } catch (exception: Exception) {
             jsonRpcError(id, -32603, exception.message ?: "Internal MCP bridge error")
         }
-        writeJson(socket, response)
+        val protocolVersion = headers["mcp-protocol-version"]
+            ?: response.optJSONObject("result")?.optString("protocolVersion")
+            ?: MCP_PROTOCOL_VERSION
+        writeJson(socket, response, protocolVersion)
     }
 
     private fun handleJsonRpc(request: JSONObject): JSONObject {
@@ -399,8 +402,8 @@ class AndroidMcpBridge(
             .put("id", id ?: JSONObject.NULL)
             .put("error", JSONObject().put("code", code).put("message", message))
 
-    private fun writeJson(socket: Socket, response: JSONObject) {
-        writeHttp(socket, 200, "OK", response.toString(), "application/json")
+    private fun writeJson(socket: Socket, response: JSONObject, protocolVersion: String) {
+        writeHttp(socket, 200, "OK", response.toString(), "application/json", protocolVersion)
     }
 
     private fun writeHttp(
@@ -408,14 +411,15 @@ class AndroidMcpBridge(
         status: Int,
         reason: String,
         body: String,
-        contentType: String = "text/plain"
+        contentType: String = "text/plain",
+        protocolVersion: String = MCP_PROTOCOL_VERSION
     ) {
         val bytes = body.toByteArray(Charsets.UTF_8)
         val headers = "HTTP/1.1 " + status + " " + reason + "\r\n" +
             "Content-Type: " + contentType + "; charset=utf-8\r\n" +
             "Content-Length: " + bytes.size + "\r\n" +
             "Cache-Control: no-store\r\n" +
-            "MCP-Protocol-Version: " + MCP_PROTOCOL_VERSION + "\r\n" +
+            "MCP-Protocol-Version: " + protocolVersion + "\r\n" +
             "Connection: close\r\n\r\n"
         val output = socket.getOutputStream()
         output.write(headers.toByteArray(Charsets.US_ASCII))
