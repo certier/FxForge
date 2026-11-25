@@ -184,7 +184,7 @@ private fun FxForgeApp(
                 }
                 Destination.DEVICE -> DeviceScreen(repository, userServiceController, padding)
                 Destination.ENVIRONMENT -> EnvironmentScreen(padding, linuxRuntimeManager)
-                Destination.TERMINAL -> TerminalScreen(userServiceController, padding)
+                Destination.TERMINAL -> TerminalScreen(userServiceController, linuxRuntimeManager, padding)
                 Destination.OPENCODE -> OpenCodeScreen(linuxRuntimeManager, androidMcpBridge, padding)
             }
         }
@@ -634,7 +634,30 @@ private fun OpenCodeScreen(
 @Composable
 private fun TerminalScreen(
     controller: ShizukuUserServiceController,
+    runtimeManager: LinuxRuntimeManager,
     padding: PaddingValues
+) {
+    var linuxMode by remember { mutableStateOf(false) }
+    Column(Modifier.fillMaxSize().padding(padding)) {
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            Button(onClick = { linuxMode = false }) { Text("Android shell") }
+            Button(onClick = { linuxMode = true }) { Text("Debian Linux") }
+        }
+        if (linuxMode) {
+            LinuxTerminalPanel(runtimeManager, Modifier.weight(1f))
+        } else {
+            AndroidTerminalPanel(controller, Modifier.weight(1f))
+        }
+    }
+}
+
+@Composable
+private fun AndroidTerminalPanel(
+    controller: ShizukuUserServiceController,
+    modifier: Modifier = Modifier
 ) {
     val serviceStatus by controller.status.collectAsState()
     val scope = rememberCoroutineScope()
@@ -645,12 +668,12 @@ private fun TerminalScreen(
     val reportedUid = serviceStatus.deviceFacts?.uid?.toString() ?: "not queried"
 
     Column(
-        modifier = Modifier.fillMaxSize().padding(padding).padding(16.dp),
+        modifier = modifier.fillMaxSize().padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
         Text("Android shell", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
         Text(
-            "Commands run as the UID reported by Shizuku. This is a command console, not a persistent PTY: each command starts a fresh shell process. Commands are sent only when you press Run."
+            "Commands run as the UID reported by Shizuku. Each command starts a fresh shell process; commands are sent only when you press Run."
         )
         InfoCard(
             "Device service",
@@ -691,9 +714,7 @@ private fun TerminalScreen(
                 "Exit status",
                 response.error ?: response.exitCode?.toString() ?: "No exit code returned"
             )
-            if (response.truncated) {
-                Text("Output reached the 64 KiB limit and was truncated.")
-            }
+            if (response.truncated) Text("Output reached the 64 KiB limit and was truncated.")
             Card(Modifier.fillMaxWidth()) {
                 SelectionContainer {
                     Text(
@@ -712,6 +733,112 @@ private fun TerminalScreen(
                     val exitLabel = response.error ?: "exit " + (response.exitCode?.toString() ?: "unknown")
                     Text(exitLabel, style = MaterialTheme.typography.bodySmall)
                     TextButton(onClick = { command = input }) { Text("Run again") }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun LinuxTerminalPanel(
+    runtimeManager: LinuxRuntimeManager,
+    modifier: Modifier = Modifier
+) {
+    val state by runtimeManager.terminalState.collectAsState()
+    val linuxState by runtimeManager.state.collectAsState()
+    val scope = rememberCoroutineScope()
+    var command by remember { mutableStateOf("pwd && uname -a") }
+    var running by remember { mutableStateOf(false) }
+    var result by remember { mutableStateOf<LinuxCommandResult?>(null) }
+    var history by remember { mutableStateOf<List<Pair<String, LinuxCommandResult>>>(emptyList()) }
+
+    Column(
+        modifier = modifier.fillMaxSize().padding(16.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        Text("Debian Linux shell", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
+        Text("A persistent Bash session in the Debian ARM64 workspace. It preserves cd and environment changes between commands. It uses pipes rather than a kernel PTY, so full-screen interactive programs are not supported.")
+        InfoCard(
+            "Linux session",
+            when {
+                state.running -> "Running · /workspace"
+                state.starting -> "Starting PRoot shell…"
+                else -> "Stopped"
+            }
+        )
+        state.error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+        if (!state.running) {
+            Button(
+                enabled = linuxState.installed && !state.starting,
+                onClick = {
+                    scope.launch { runtimeManager.startTerminalSession() }
+                }
+            ) {
+                Text(if (state.starting) "Starting…" else "Start Linux shell")
+            }
+            if (!linuxState.installed) Text("Install Debian from Environment first.")
+        } else {
+            OutlinedTextField(
+                value = command,
+                onValueChange = { command = it },
+                modifier = Modifier.fillMaxWidth(),
+                label = { Text("Bash command") },
+                minLines = 2,
+                maxLines = 4,
+                enabled = !running,
+                placeholder = { Text("cd app && ls") }
+            )
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Button(
+                    enabled = !running && command.isNotBlank(),
+                    onClick = {
+                        val submitted = command.trim()
+                        running = true
+                        scope.launch {
+                            val response = runtimeManager.executeTerminalCommand(submitted)
+                            result = response
+                            history = (history + (submitted to response)).takeLast(30)
+                            running = false
+                        }
+                    }
+                ) {
+                    Text(if (running) "Running…" else "Run")
+                }
+                TextButton(
+                    enabled = !running,
+                    onClick = { scope.launch { runtimeManager.stopTerminalSession() } }
+                ) {
+                    Text("Close session")
+                }
+            }
+            if (running) CircularProgressIndicator()
+            result?.let { response ->
+                InfoCard(
+                    "Exit status",
+                    response.error ?: response.exitCode?.toString() ?: "No exit code returned"
+                )
+                if (response.truncated) Text("Output reached the 128 KiB limit and was truncated.")
+                Card(Modifier.fillMaxWidth()) {
+                    SelectionContainer {
+                        Text(
+                            response.output.ifBlank { response.error ?: "(no output)" },
+                            modifier = Modifier.fillMaxWidth().heightIn(max = 320.dp).verticalScroll(rememberScrollState()).padding(12.dp),
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                    }
+                }
+            }
+            Text("Recent Linux commands", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+            history.asReversed().forEach { (input, response) ->
+                Card(Modifier.fillMaxWidth()) {
+                    Column(Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Text("$ $input", fontWeight = FontWeight.SemiBold)
+                        Text(
+                            response.error ?: "exit " + (response.exitCode?.toString() ?: "unknown"),
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                        TextButton(onClick = { command = input }) { Text("Run again") }
+                    }
                 }
             }
         }
