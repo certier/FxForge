@@ -37,6 +37,10 @@ jobs:
           file proot-artifacts/loader
           readelf -h proot-artifacts/proot
           sha256sum proot-artifacts/*
+          mkdir -p app/src/main/jniLibs/arm64-v8a
+          install -m 0755 proot-artifacts/proot app/src/main/jniLibs/arm64-v8a/libfxforge_proot.so
+          install -m 0755 proot-artifacts/loader app/src/main/jniLibs/arm64-v8a/libfxforge_proot_loader.so
+          install -m 0755 proot-artifacts/loader32 app/src/main/jniLibs/arm64-v8a/libfxforge_proot_loader32.so
       - name: Upload Android PRoot binaries
         uses: actions/upload-artifact@v4
         with:
