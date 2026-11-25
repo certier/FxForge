@@ -74,3 +74,13 @@ components are distributed under Apache License 2.0; see
 - License text: `third_party/licenses/Apache-2.0`
 - Apache-licensed transitive Apache Commons components retain their upstream
   notices and licenses in their Maven artifacts.
+
+
+## OpenCode CLI
+
+- Component: OpenCode CLI v2, installed by the user inside Debian at runtime
+- Upstream: https://github.com/anomalyco/opencode
+- License: MIT
+- License text: `third_party/licenses/opencode-MIT`
+- The CLI binary is downloaded by the official upstream installer; it is not
+  bundled in the FxForge APK.
