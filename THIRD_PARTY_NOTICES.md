@@ -60,7 +60,7 @@
 The ARM64 Android build-tools executables are derived from Android Open Source
 Project components, including AAPT2, AIDL, ZIPALIGN, and split-select. Those
 components are distributed under Apache License 2.0; see
-`third_party/licenses/android-build-tools-Apache-2.0`.
+`third_party/licenses/Apache-2.0`.
 
 
 ## Apache Commons Compress
@@ -68,6 +68,6 @@ components are distributed under Apache License 2.0; see
 - Component: Apache Commons Compress, version 1.28.0
 - Upstream: https://commons.apache.org/proper/commons-compress/
 - License: Apache License 2.0
-- License text: `third_party/licenses/android-build-tools-Apache-2.0`
+- License text: `third_party/licenses/Apache-2.0`
 - Apache-licensed transitive Apache Commons components retain their upstream
   notices and licenses in their Maven artifacts.
