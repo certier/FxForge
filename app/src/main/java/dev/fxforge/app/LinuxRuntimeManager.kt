@@ -378,11 +378,11 @@ class LinuxRuntimeManager(context: Context) {
                 append("OpenCode installer exited with code ")
                 append(installResult.exitCode ?: "unknown")
                 if (installResult.output.isNotBlank()) {
-                    append(":\\n")
+                    append(":\n")
                     append(installResult.output.takeLast(3000))
                 }
             }
-            !installed -> "Installer finished but /root/.opencode/bin/opencode is missing or not executable.\\n" +
+            !installed -> "Installer finished but /root/.opencode/bin/opencode is missing or not executable.\n" +
                 installResult.output.takeLast(3000)
             else -> null
         }
