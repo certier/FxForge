@@ -62,6 +62,13 @@ data class AndroidSdkState(
     val output: String? = null
 )
 
+data class AndroidBuildResult(
+    val success: Boolean,
+    val output: String,
+    val artifactUri: String? = null,
+    val error: String? = null
+)
+
 private object DebianRootfs {
     const val ARCHIVE_SIZE = 28_144_305L
     const val SHA256 = "7f1aa0b5c351d0542b2066749ed47608e5873bcdd1fd14f4df6f0a05cac02f8e"
@@ -210,6 +217,11 @@ class LinuxRuntimeManager(context: Context) {
                 timeoutSeconds = 1800
             )
             requireCommandSuccess(nativeTools, "Could not install ARM64 Android build tools or Gradle.")
+            val gradleProperties = File(rootfsDirectory, "root/.gradle/gradle.properties")
+            gradleProperties.parentFile?.mkdirs()
+            if (!gradleProperties.exists() || !gradleProperties.readText().contains("android.aapt2FromMavenOverride=")) {
+                gradleProperties.appendText("\nandroid.aapt2FromMavenOverride=/opt/android-sdk/build-tools/36.0.0/aapt2\n")
+            }
             androidSdkMarker.parentFile?.mkdirs()
             androidSdkMarker.writeText("android-36\nbuild-tools-36.0.0\ngradle-8.13\narm64-v8a\n")
             mutableSdkState.value = AndroidSdkState(
@@ -431,7 +443,67 @@ class LinuxRuntimeManager(context: Context) {
         }
     }
 
-    suspend fun runCommand(command: String, timeoutSeconds: Int = 30): LinuxCommandResult =
+    suspend fun buildProject(projectRoot: androidx.documentfile.provider.DocumentFile): AndroidBuildResult =
+        withContext(Dispatchers.IO) {
+            if (!androidSdkMarker.isFile) {
+                return@withContext AndroidBuildResult(false, "", error = "Install the Android SDK and ARM64 build tools first.")
+            }
+            if (!projectRoot.isDirectory || !projectRoot.canRead()) {
+                return@withContext AndroidBuildResult(false, "", error = "The selected Android project folder cannot be read.")
+            }
+            val hasSettings = projectRoot.findFile("settings.gradle.kts")?.isFile == true ||
+                projectRoot.findFile("settings.gradle")?.isFile == true
+            if (!hasSettings) {
+                return@withContext AndroidBuildResult(false, "", error = "The selected folder is not a Gradle project. A settings.gradle or settings.gradle.kts file is required.")
+            }
+            val workspace = File(appContext.filesDir, "workspaces/active")
+            try {
+                ProjectWorkspaceSync.copyFromSaf(appContext, projectRoot, workspace)
+                File(workspace, "local.properties").writeText("sdk.dir=/opt/android-sdk\n")
+                File(rootfsDirectory, "workspace").mkdirs()
+                val result = runCommand(
+                    "cd /workspace && if [ -f ./gradlew ]; then sh ./gradlew --no-daemon assembleDebug; else gradle --no-daemon assembleDebug; fi",
+                    timeoutSeconds = 3600,
+                    binds = listOf(workspace.absolutePath to "/workspace"),
+                    maxOutputChars = MAX_BUILD_OUTPUT_CHARS
+                )
+                if (result.exitCode != 0) {
+                    return@withContext AndroidBuildResult(
+                        false,
+                        result.output,
+                        error = result.error ?: "Gradle build failed with exit code " + (result.exitCode?.toString() ?: "unknown")
+                    )
+                }
+                val apk = File(workspace, "app/build/outputs/apk/debug/app-debug.apk")
+                if (!apk.isFile) {
+                    return@withContext AndroidBuildResult(
+                        false,
+                        result.output,
+                        error = "Gradle completed but app/build/outputs/apk/debug/app-debug.apk was not found."
+                    )
+                }
+                val copiedApk = ProjectWorkspaceSync.copyArtifactToSaf(
+                    appContext,
+                    apk,
+                    projectRoot,
+                    "FxForge-debug.apk"
+                )
+                AndroidBuildResult(true, result.output, copiedApk.uri.toString())
+            } catch (exception: Exception) {
+                AndroidBuildResult(
+                    false,
+                    "",
+                    error = exception.message ?: "Could not build the selected Android project."
+                )
+            }
+        }
+
+    suspend fun runCommand(
+        command: String,
+        timeoutSeconds: Int = 30,
+        binds: List<Pair<String, String>> = emptyList(),
+        maxOutputChars: Int = MAX_OUTPUT_CHARS
+    ): LinuxCommandResult =
         withContext(Dispatchers.IO) {
             if (!markerFile.isFile) {
                 return@withContext LinuxCommandResult("", null, false, "Install Debian before running Linux commands.")
@@ -452,24 +524,38 @@ class LinuxRuntimeManager(context: Context) {
             val binary = File(appContext.applicationInfo.nativeLibraryDir, PROOT_BINARY)
             val loader = File(appContext.applicationInfo.nativeLibraryDir, PROOT_LOADER)
             val loader32 = File(appContext.applicationInfo.nativeLibraryDir, PROOT_LOADER_32)
-            val process = try {
-                ProcessBuilder(
-                    binary.absolutePath,
-                    "--link2symlink",
-                    "-0",
-                    "-r", rootfsDirectory.absolutePath,
-                    "-b", "/dev",
-                    "-b", "/proc",
-                    "-b", "/sys",
+            val prootArguments = mutableListOf(
+                binary.absolutePath,
+                "--link2symlink",
+                "-0",
+                "-r", rootfsDirectory.absolutePath,
+                "-b", "/dev",
+                "-b", "/proc",
+                "-b", "/sys"
+            )
+            binds.forEach { (hostPath, guestPath) ->
+                prootArguments.addAll(listOf("-b", hostPath + ":" + guestPath))
+            }
+            prootArguments.addAll(
+                listOf(
                     "-w", "/root",
                     "/usr/bin/env",
                     "HOME=/root",
-                    "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+                    "PATH=/opt/gradle/gradle-8.13/bin:/opt/android-sdk/cmdline-tools/latest/bin:/opt/android-sdk/platform-tools:/opt/android-sdk/build-tools/36.0.0:/root/.opencode/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+                    "JAVA_HOME=/usr/lib/jvm/java-17-openjdk-arm64",
+                    "ANDROID_HOME=/opt/android-sdk",
+                    "ANDROID_SDK_ROOT=/opt/android-sdk",
+                    "GRADLE_USER_HOME=/root/.gradle",
+                    "ORG_GRADLE_PROJECT_android_aapt2FromMavenOverride=/opt/android-sdk/build-tools/36.0.0/aapt2",
                     "TERM=xterm-256color",
                     "/bin/sh",
                     "-lc",
                     command
-                ).directory(rootfsDirectory)
+                )
+            )
+            val process = try {
+                ProcessBuilder(prootArguments)
+                    .directory(rootfsDirectory)
                     .redirectErrorStream(true)
                     .apply {
                         environment()["PROOT_TMP_DIR"] = temporaryDirectory.absolutePath
@@ -493,7 +579,7 @@ class LinuxRuntimeManager(context: Context) {
                         while (true) {
                             val count = reader.read(buffer)
                             if (count < 0) break
-                            val remaining = MAX_OUTPUT_CHARS - output.length
+                            val remaining = maxOutputChars.coerceIn(1024, MAX_BUILD_OUTPUT_CHARS) - output.length
                             if (count > remaining) {
                                 output.append(buffer, 0, remaining)
                                 truncated = true
