@@ -54,6 +54,14 @@ data class OpenCodeState(
     val output: String? = null
 )
 
+data class AndroidSdkState(
+    val installed: Boolean = false,
+    val installing: Boolean = false,
+    val phase: String = "Not installed",
+    val error: String? = null,
+    val output: String? = null
+)
+
 private object DebianRootfs {
     const val ARCHIVE_SIZE = 28_144_305L
     const val SHA256 = "7f1aa0b5c351d0542b2066749ed47608e5873bcdd1fd14f4df6f0a05cac02f8e"
@@ -68,6 +76,14 @@ class LinuxRuntimeManager(context: Context) {
     private val markerFile = File(rootfsDirectory, ".fxforge-rootfs-version")
     private val downloadFile = File(appContext.cacheDir, "debian-bookworm-arm64.tar.gz")
     private val openCodeBinary = File(rootfsDirectory, "root/.opencode/bin/opencode")
+    private val androidSdkMarker = File(rootfsDirectory, "opt/android-sdk/.fxforge-sdk-version")
+    private val mutableSdkState = MutableStateFlow(
+        AndroidSdkState(
+            installed = androidSdkMarker.isFile,
+            phase = if (androidSdkMarker.isFile) "Android SDK installed" else "Not installed"
+        )
+    )
+    val androidSdkState: StateFlow<AndroidSdkState> = mutableSdkState.asStateFlow()
     @Volatile private var openCodeProcess: Process? = null
     @Volatile private var openCodePassword: String? = null
     private val mutableOpenCodeState = MutableStateFlow(OpenCodeState(installed = openCodeBinary.isFile))
@@ -126,6 +142,96 @@ class LinuxRuntimeManager(context: Context) {
                 phase = "Installation failed",
                 error = exception.message ?: "Debian installation failed."
             )
+        }
+    }
+
+    suspend fun installAndroidSdk() = withContext(Dispatchers.IO) {
+        if (!markerFile.isFile) {
+            mutableSdkState.value = mutableSdkState.value.copy(error = "Install Debian before installing Android SDK.")
+            return@withContext
+        }
+        if (androidSdkMarker.isFile) {
+            mutableSdkState.value = AndroidSdkState(installed = true, phase = "Android SDK installed")
+            return@withContext
+        }
+        val availableBytes = StatFs(appContext.filesDir.absolutePath).availableBytes
+        if (availableBytes < MIN_SDK_FREE_SPACE_BYTES) {
+            mutableSdkState.value = mutableSdkState.value.copy(
+                error = "Android SDK installation needs at least 4 GiB of free app storage."
+            )
+            return@withContext
+        }
+        mutableSdkState.value = AndroidSdkState(installing = true, phase = "Installing Java and SDK prerequisites")
+        try {
+            val prerequisites = runCommand(
+                "apt-get -qq update && DEBIAN_FRONTEND=noninteractive apt-get -qq install -y openjdk-17-jdk-headless curl unzip xz-utils ca-certificates",
+                timeoutSeconds = 900
+            )
+            requireCommandSuccess(prerequisites, "Could not install Java and SDK prerequisites.")
+            mutableSdkState.value = mutableSdkState.value.copy(phase = "Downloading Android command-line tools")
+            val tools = runCommand(
+                "mkdir -p /opt/android-sdk/cmdline-tools /tmp/fxforge-sdk-tools && " +
+                    "curl -fL --retry 3 https://dl.google.com/android/repository/commandlinetools-linux-15859902_latest.zip -o /tmp/fxforge-sdk-tools.zip && " +
+                    "echo '4e4c464f145a7512b57d088ac6c278c03c9eea610886b35a5e0804e74eedf583  /tmp/fxforge-sdk-tools.zip' | sha256sum -c - && " +
+                    "unzip -q /tmp/fxforge-sdk-tools.zip -d /tmp/fxforge-sdk-tools && " +
+                    "mkdir -p /opt/android-sdk/cmdline-tools/latest && " +
+                    "cp -a /tmp/fxforge-sdk-tools/cmdline-tools/. /opt/android-sdk/cmdline-tools/latest/ && " +
+                    "rm -rf /tmp/fxforge-sdk-tools /tmp/fxforge-sdk-tools.zip",
+                timeoutSeconds = 900
+            )
+            requireCommandSuccess(tools, "Could not install Android command-line tools.")
+            mutableSdkState.value = mutableSdkState.value.copy(phase = "Installing Android API 36 and Build Tools 36.0.0")
+            val sdkPackages = runCommand(
+                "export ANDROID_HOME=/opt/android-sdk ANDROID_SDK_ROOT=/opt/android-sdk && " +
+                    "yes | /opt/android-sdk/cmdline-tools/latest/bin/sdkmanager --sdk_root=/opt/android-sdk --licenses >/dev/null && " +
+                    "/opt/android-sdk/cmdline-tools/latest/bin/sdkmanager --sdk_root=/opt/android-sdk " +
+                    "\"platforms;android-36\" \"build-tools;36.0.0\"",
+                timeoutSeconds = 1800
+            )
+            requireCommandSuccess(sdkPackages, "Could not install Android SDK Platform 36 and Build Tools 36.0.0.")
+            mutableSdkState.value = mutableSdkState.value.copy(phase = "Installing verified ARM64 build tools and Gradle")
+            val nativeTools = runCommand(
+                "set -e; BT=/opt/android-sdk/build-tools/36.0.0; BASE=https://github.com/Commit451/android-arm-build-tools/releases/download/platform-tools-36.0.0; " +
+                    "curl -fL \"$BASE/aapt2\" -o \"$BT/aapt2\"; " +
+                    "echo '7512ff7e381bea6fd310b6f6e347422c8fda21e07c6e3f0162742e95eb9d7f98  '"$BT/aapt2\" | sha256sum -c -; " +
+                    "curl -fL \"$BASE/aidl\" -o \"$BT/aidl\"; " +
+                    "echo '8c97356b8bba8f7aad44cfd408e3ee24c66a1258244b5d08af1c9249f50dd659  '"$BT/aidl\" | sha256sum -c -; " +
+                    "curl -fL \"$BASE/zipalign\" -o \"$BT/zipalign\"; " +
+                    "echo 'e8856fb24b10095eb6e940c577ce96d89ddbfc45aa0f7eeaef1597ef68f11a12  '"$BT/zipalign\" | sha256sum -c -; " +
+                    "curl -fL \"$BASE/split-select\" -o \"$BT/split-select\"; " +
+                    "echo 'fb7f0c3c87dbd4243d7e1277ba64ded2399389244058b6a4c969cc615360766c  '"$BT/split-select\" | sha256sum -c -; " +
+                    "chmod 755 \"$BT/aapt2\" \"$BT/aidl\" \"$BT/zipalign\" \"$BT/split-select\"; " +
+                    "mkdir -p /opt/gradle /tmp/fxforge-gradle && " +
+                    "curl -fL --retry 3 https://services.gradle.org/distributions/gradle-8.13-bin.zip -o /tmp/gradle-8.13-bin.zip && " +
+                    "echo '20f1b1176237254a6fc204d8434196fa11a4cfb387567519c61556e8710aed78  /tmp/gradle-8.13-bin.zip' | sha256sum -c - && " +
+                    "unzip -q /tmp/gradle-8.13-bin.zip -d /opt/gradle && " +
+                    "rm -rf /tmp/fxforge-gradle /tmp/gradle-8.13-bin.zip && " +
+                    "\"$BT/aapt2\" version && /opt/gradle/gradle-8.13/bin/gradle --version",
+                timeoutSeconds = 1800
+            )
+            requireCommandSuccess(nativeTools, "Could not install ARM64 Android build tools or Gradle.")
+            androidSdkMarker.parentFile?.mkdirs()
+            androidSdkMarker.writeText("android-36\nbuild-tools-36.0.0\ngradle-8.13\narm64-v8a\n")
+            mutableSdkState.value = AndroidSdkState(
+                installed = true,
+                phase = "Android SDK and ARM64 build tools installed",
+                output = nativeTools.output
+            )
+        } catch (exception: CancellationException) {
+            mutableSdkState.value = AndroidSdkState(phase = "Installation cancelled")
+            throw exception
+        } catch (exception: Exception) {
+            mutableSdkState.value = AndroidSdkState(
+                phase = "Installation failed",
+                error = exception.message ?: "Android SDK installation failed."
+            )
+        }
+    }
+
+    private fun requireCommandSuccess(result: LinuxCommandResult, message: String) {
+        if (result.exitCode != 0) {
+            throw IOException(result.error ?: message + " Exit code: " + (result.exitCode?.toString() ?: "unknown") +
+                if (result.output.isBlank()) "" else "\n" + result.output.takeLast(2000))
         }
     }
 
@@ -574,7 +680,8 @@ class LinuxRuntimeManager(context: Context) {
         private const val PROOT_LOADER_32 = "libfxforge_proot_loader32.so"
         private const val MAX_COMMAND_CHARS = 8192
         private const val MAX_OUTPUT_CHARS = 64 * 1024
-        private const val MAX_COMMAND_TIMEOUT_SECONDS = 900
+        private const val MAX_COMMAND_TIMEOUT_SECONDS = 3600
+        private const val MIN_SDK_FREE_SPACE_BYTES = 4L * 1024L * 1024L * 1024L
         private const val OPEN_CODE_PORT = 4096
         private const val OPEN_CODE_START_ATTEMPTS = 40
         private const val OPEN_CODE_POLL_INTERVAL_MS = 250L
