@@ -5,4 +5,5 @@ import android.os.Bundle;
 interface IAndroidDeviceService {
     void destroy() = 16777114;
     Bundle getDeviceInfo() = 1;
+    Bundle readLogcat(int maxLines) = 2;
 }

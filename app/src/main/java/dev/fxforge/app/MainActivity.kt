@@ -17,7 +17,11 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.text.selection.SelectionContainer
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.Button
@@ -46,8 +50,8 @@ import androidx.documentfile.provider.DocumentFile
 import dev.fxforge.shizuku.ShizukuPrivilege
 import dev.fxforge.shizuku.ShizukuStatusRepository
 import dev.fxforge.shizuku.ShizukuUserServiceController
-import kotlinx.coroutines.launch
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.IOException
 
@@ -352,7 +356,11 @@ private fun DeviceScreen(
     val coroutineScope = rememberCoroutineScope()
     var requestError by remember { mutableStateOf<String?>(null) }
     Column(
-        modifier = Modifier.fillMaxSize().padding(padding).padding(20.dp),
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(padding)
+            .padding(20.dp)
+            .verticalScroll(rememberScrollState()),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
         Text("Shizuku connection", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
@@ -402,6 +410,14 @@ private fun DeviceScreen(
             }) {
                 Text("Read device information through Shizuku")
             }
+            Button(
+                enabled = !userServiceStatus.logcatLoading,
+                onClick = {
+                    coroutineScope.launch { userServiceController.readLogcat() }
+                }
+            ) {
+                Text(if (userServiceStatus.logcatLoading) "Reading logcat…" else "Capture last 200 logcat lines")
+            }
         }
         userServiceStatus.deviceFacts?.let { facts ->
             InfoCard(
@@ -417,6 +433,32 @@ private fun DeviceScreen(
         userServiceStatus.error?.let {
             Text(it, color = MaterialTheme.colorScheme.error)
         }
+        userServiceStatus.logcatError?.let {
+            Text(it, color = MaterialTheme.colorScheme.error)
+        }
+        userServiceStatus.logcatOutput?.let { output ->
+            InfoCard(
+                "Device logcat",
+                if (userServiceStatus.logcatTruncated) {
+                    "Output reached the 64 KiB text limit and was truncated."
+                } else {
+                    "Captured on request. Logs can contain sensitive device data."
+                }
+            )
+            Card(modifier = Modifier.fillMaxWidth()) {
+                SelectionContainer {
+                    Text(
+                        output.ifEmpty { "No log output was returned." },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(max = 360.dp)
+                            .verticalScroll(rememberScrollState())
+                            .padding(12.dp),
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                }
+            }
+        }
         TextButton(onClick = {
             context.startActivity(
                 Intent(Intent.ACTION_VIEW, "https://shizuku.rikka.app/guide/setup/".toUri())
@@ -426,7 +468,7 @@ private fun DeviceScreen(
         }
         requestError?.let { Text(it, color = MaterialTheme.colorScheme.error) }
         Text(
-            "ADB-started Shizuku normally uses UID 2000, not root. The optional UserService runs under Shizuku's actual UID and only reads basic device facts; it does not provide arbitrary shell access.",
+            "ADB-started Shizuku normally uses UID 2000, not root. The optional UserService runs under Shizuku's actual UID. Its device-facts and bounded logcat actions are explicit; it does not provide arbitrary shell access.",
             style = MaterialTheme.typography.bodySmall
         )
     }

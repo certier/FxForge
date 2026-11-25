@@ -7,9 +7,10 @@ enum class ShizukuPrivilege(val label: String) {
     UNAVAILABLE("Unavailable");
 
     companion object {
-        fun fromUid(uid: Int): ShizukuPrivilege = when (uid) {
-            0 -> ROOT
-            2000 -> ADB_SHELL
+        fun fromUid(uid: Int): ShizukuPrivilege = when {
+            uid < 0 -> UNAVAILABLE
+            uid == 0 -> ROOT
+            uid == 2000 -> ADB_SHELL
             else -> OTHER
         }
     }

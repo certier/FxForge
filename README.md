@@ -7,8 +7,9 @@ affiliated with the OpenCode team.
 > foundation, persistent Storage Access Framework (SAF) project-folder
 > selection and browser, a native text editor for UTF-8 files up to 2 MiB, live
 > Shizuku binder/permission/privilege reporting, and device diagnostics.
-> Shizuku UserService can also return basic device facts and the actual
-> service-process UID after explicit permission. The editor uses Sora Editor
+> Shizuku UserService can also return basic device facts, the actual
+> service-process UID, and a user-requested bounded logcat capture after
+> explicit permission. The editor uses Sora Editor
 > and currently applies Java syntax support to `.java` files; other files are
 > edited as plain text. The app does **not** yet contain a Linux userland,
 > OpenCode runtime, PTY terminal, in-app Android SDK installer/build toolchain,
@@ -45,10 +46,13 @@ UID actually reported by Shizuku and does not infer root access from a granted
 permission. On non-root setups, Shizuku may need to be started again after a
 device reboot.
 
-The UserService is non-daemon, explicitly unbound by FxForge, and only returns
-basic `Build` properties and its actual process UID. This is not arbitrary
-command execution; package installation, shell, logcat, and privileged
-filesystem operations are not implemented.
+The UserService is non-daemon and explicitly unbound by FxForge. It reports
+basic `Build` properties and its actual process UID, and can capture up to 500
+logcat lines on explicit request. Log output is capped at 64 KiB of text,
+collected through fixed `logcat` arguments (not a shell command string), and
+is shown in the app only; logs may contain sensitive device data. No arbitrary
+command execution or privileged filesystem access is exposed. Package
+installation is not implemented.
 
 ## Compatibility research and constraints
 

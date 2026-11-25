@@ -20,6 +20,11 @@ class ShizukuStatusTest {
     }
 
     @Test
+    fun treatsInvalidUidAsUnavailable() {
+        assertEquals(ShizukuPrivilege.UNAVAILABLE, ShizukuPrivilege.fromUid(-1))
+    }
+
+    @Test
     fun reportsPrivilegeUnavailableWithoutUid() {
         assertEquals(ShizukuPrivilege.UNAVAILABLE, ShizukuStatus().privilege)
     }

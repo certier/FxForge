@@ -40,6 +40,10 @@ data class ShizukuUserServiceStatus(
     val connecting: Boolean = false,
     val connected: Boolean = false,
     val deviceFacts: AndroidDeviceFacts? = null,
+    val logcatLoading: Boolean = false,
+    val logcatOutput: String? = null,
+    val logcatTruncated: Boolean = false,
+    val logcatError: String? = null,
     val error: String? = null
 )
 
@@ -168,6 +172,44 @@ class ShizukuUserServiceController(context: Context) {
         }
     }
 
+    suspend fun readLogcat(maxLines: Int = LogcatLimits.DEFAULT_LINES) {
+        val activeService = service
+        if (activeService == null) {
+            mutableStatus.value = mutableStatus.value.copy(
+                logcatError = "Connect the Shizuku device service before reading logcat"
+            )
+            return
+        }
+        mutableStatus.value = mutableStatus.value.copy(
+            logcatLoading = true,
+            logcatError = null
+        )
+        try {
+            val bundle = withContext(Dispatchers.IO) {
+                activeService.readLogcat(LogcatLimits.lines(maxLines))
+            }
+            if (service !== activeService) return
+            mutableStatus.value = mutableStatus.value.copy(
+                logcatLoading = false,
+                logcatOutput = bundle.getString(AndroidDeviceUserService.KEY_LOGCAT_OUTPUT).orEmpty(),
+                logcatTruncated = bundle.getBoolean(AndroidDeviceUserService.KEY_LOGCAT_TRUNCATED),
+                logcatError = bundle.getString(AndroidDeviceUserService.KEY_LOGCAT_ERROR)
+            )
+        } catch (exception: RemoteException) {
+            if (service !== activeService) return
+            mutableStatus.value = mutableStatus.value.copy(
+                logcatLoading = false,
+                logcatError = "Logcat request failed: ${exception.message ?: "remote service error"}"
+            )
+        } catch (exception: RuntimeException) {
+            if (service !== activeService) return
+            mutableStatus.value = mutableStatus.value.copy(
+                logcatLoading = false,
+                logcatError = "Logcat request failed: ${exception.message ?: "device service error"}"
+            )
+        }
+    }
+
     private fun setError(message: String) {
         mutableStatus.value = mutableStatus.value.copy(
             connecting = false,
@@ -176,6 +218,6 @@ class ShizukuUserServiceController(context: Context) {
     }
 
     companion object {
-        private const val SERVICE_VERSION = 1
+        private const val SERVICE_VERSION = 2
     }
 }
