@@ -209,7 +209,7 @@ class LinuxRuntimeManager(context: Context) {
         mutableSdkState.value = AndroidSdkState(installing = true, phase = "Installing Java and SDK prerequisites")
         try {
             val prerequisites = runCommand(
-                "apt-get -qq update && DEBIAN_FRONTEND=noninteractive apt-get -qq install -y openjdk-17-jdk-headless curl unzip xz-utils ca-certificates",
+                "apt-get -qq update && DEBIAN_FRONTEND=noninteractive apt-get -qq install -y openjdk-17-jdk-headless curl unzip xz-utils ca-certificates git openssh-client ripgrep jq procps file rsync",
                 timeoutSeconds = 900
             )
             requireCommandSuccess(prerequisites, "Could not install Java and SDK prerequisites.")
