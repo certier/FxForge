@@ -241,6 +241,15 @@ private fun FxForgeApp(
                             onBuildProject = {
                                 projectToBuild = it
                                 buildResult = null
+                            },
+                            canUseInOpenCode = linuxRuntimeManager.state.value.installed,
+                            onUseInOpenCode = { folder ->
+                                coroutineScope.launch {
+                                    linuxRuntimeManager.syncWorkspaceFromSaf(folder)
+                                    if (linuxRuntimeManager.workspaceState.value.selected) {
+                                        destination = Destination.OPENCODE
+                                    }
+                                }
                             }
                         )
                     } else {
@@ -1280,7 +1289,9 @@ private fun ProjectsScreen(
     refreshToken: Int,
     onOpenFile: (ProjectFile) -> Unit,
     onInstallApk: (ProjectFile) -> Unit,
-    onBuildProject: (DocumentFile) -> Unit
+    onBuildProject: (DocumentFile) -> Unit,
+    canUseInOpenCode: Boolean,
+    onUseInOpenCode: (DocumentFile) -> Unit
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -1406,7 +1417,10 @@ private fun ProjectsScreen(
                 }
             } else {
                 InfoCard("Selected workspace", currentDirectoryName ?: selectedUri.orEmpty())
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
                     OutlinedButton(onClick = { folderPicker.launch(null) }) { Text("Change folder") }
                     if (currentDirectory?.canWrite() == true) {
                         Button(onClick = {
@@ -1414,6 +1428,13 @@ private fun ProjectsScreen(
                             showCreateProject = true
                         }) { Text("New project") }
                     }
+                }
+                FilledTonalButton(
+                    onClick = { currentDirectory?.let(onUseInOpenCode) },
+                    enabled = canUseInOpenCode && currentDirectory != null && !loading,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text(if (canUseInOpenCode) "Use this folder in OpenCode  →" else "Install Debian to use OpenCode")
                 }
             }
         }
