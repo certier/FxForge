@@ -10,4 +10,5 @@ class LogcatLimitsTest {
         assertEquals(200, LogcatLimits.lines(LogcatLimits.DEFAULT_LINES))
         assertEquals(LogcatLimits.MAX_LINES, LogcatLimits.lines(Int.MAX_VALUE))
     }
+
 }

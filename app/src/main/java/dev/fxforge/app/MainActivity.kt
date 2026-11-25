@@ -12,7 +12,10 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.content.edit
 import androidx.core.net.toUri
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
@@ -22,10 +25,10 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
@@ -47,12 +50,14 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.documentfile.provider.DocumentFile
+import dev.fxforge.shizuku.ShizukuApkInstallResult
 import dev.fxforge.shizuku.ShizukuPrivilege
 import dev.fxforge.shizuku.ShizukuStatusRepository
 import dev.fxforge.shizuku.ShizukuUserServiceController
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.io.FileNotFoundException
 import java.io.IOException
 
 class MainActivity : ComponentActivity() {
@@ -91,7 +96,10 @@ private data class ProjectEntry(
     val canWrite: Boolean,
     val contentType: String?,
     val sizeBytes: Long
-)
+) {
+    val isApk: Boolean
+        get() = !isDirectory && name.endsWith(".apk", ignoreCase = true)
+}
 
 @Composable
 private fun FxForgeApp(
@@ -100,44 +108,166 @@ private fun FxForgeApp(
 ) {
     var destination by remember { mutableStateOf(Destination.HOME) }
     var openFile by remember { mutableStateOf<ProjectFile?>(null) }
-    Scaffold(
-        topBar = {
-            Column(Modifier.padding(start = 20.dp, end = 20.dp, top = 18.dp, bottom = 8.dp)) {
-                Text("FxForge", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
-                Text("Android development workstation", style = MaterialTheme.typography.bodyMedium)
-            }
-        },
-        bottomBar = {
-            if (openFile == null) {
-                NavigationBar {
-                    Destination.entries.forEach { item ->
-                        NavigationBarItem(
-                            selected = destination == item,
-                            onClick = { destination = item },
-                            icon = { Text(item.marker, fontWeight = FontWeight.Bold) },
-                            label = { Text(item.title) }
-                        )
+    val context = LocalContext.current
+    val coroutineScope = rememberCoroutineScope()
+    var apkToInstall by remember { mutableStateOf<ProjectFile?>(null) }
+    var installResult by remember { mutableStateOf<ShizukuApkInstallResult?>(null) }
+    var installError by remember { mutableStateOf<String?>(null) }
+    var installingApk by remember { mutableStateOf(false) }
+
+    Box(Modifier.fillMaxSize()) {
+        Scaffold(
+            topBar = {
+                Column(Modifier.padding(start = 20.dp, end = 20.dp, top = 18.dp, bottom = 8.dp)) {
+                    Text("FxForge", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+                    Text("Android development workstation", style = MaterialTheme.typography.bodyMedium)
+                }
+            },
+            bottomBar = {
+                if (openFile == null) {
+                    NavigationBar {
+                        Destination.entries.forEach { item ->
+                            NavigationBarItem(
+                                selected = destination == item,
+                                onClick = { destination = item },
+                                icon = { Text(item.marker, fontWeight = FontWeight.Bold) },
+                                label = { Text(item.title) }
+                            )
+                        }
                     }
                 }
             }
-        }
-    ) { padding ->
-        when (destination) {
-            Destination.HOME -> HomeScreen(repository, padding)
-            Destination.PROJECTS -> {
-                val file = openFile
-                if (file == null) {
-                    ProjectsScreen(padding, onOpenFile = { openFile = it })
-                } else {
-                    ProjectEditorScreen(
-                        file = file,
-                        padding = padding,
-                        onClose = { openFile = null }
-                    )
+        ) { padding ->
+            when (destination) {
+                Destination.HOME -> HomeScreen(repository, padding)
+                Destination.PROJECTS -> {
+                    val file = openFile
+                    if (file == null) {
+                        ProjectsScreen(
+                            padding,
+                            onOpenFile = { openFile = it },
+                            onInstallApk = {
+                                apkToInstall = it
+                                installResult = null
+                                installError = null
+                            }
+                        )
+                    } else {
+                        ProjectEditorScreen(
+                            file = file,
+                            padding = padding,
+                            onClose = { openFile = null }
+                        )
+                    }
                 }
+                Destination.DEVICE -> DeviceScreen(repository, userServiceController, padding)
+                Destination.ENVIRONMENT -> EnvironmentScreen(padding)
             }
-            Destination.DEVICE -> DeviceScreen(repository, userServiceController, padding)
-            Destination.ENVIRONMENT -> EnvironmentScreen(padding)
+        }
+
+        apkToInstall?.let { target ->
+            AlertDialog(
+                onDismissRequest = {
+                    if (!installingApk) {
+                        apkToInstall = null
+                        installResult = null
+                        installError = null
+                    }
+                },
+                title = { Text(if (installResult == null) "Install ${target.name}?" else "APK installation") },
+                text = {
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        if (installResult == null && installError == null) {
+                            Text(
+                                "FxForge will send this APK to Android's package manager through the Shizuku service. " +
+                                    "Only install APKs you trust. Replacing an app may update it while preserving its data."
+                            )
+                        }
+                        if (installingApk) {
+                            CircularProgressIndicator()
+                            Text("Installing through Shizuku…")
+                        }
+                        installError?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+                        installResult?.let { result ->
+                            Text(
+                                if (result.success) "Android's package manager reported success."
+                                else result.error ?: "Android's package manager reported failure.",
+                                color = if (result.success) {
+                                    MaterialTheme.colorScheme.primary
+                                } else {
+                                    MaterialTheme.colorScheme.error
+                                }
+                            )
+                            if (result.success) {
+                                result.error?.let {
+                                    Text(it, color = MaterialTheme.colorScheme.error)
+                                }
+                            }
+                            if (result.output.isNotBlank()) {
+                                Card {
+                                    Text(
+                                        result.output,
+                                        modifier = Modifier.padding(12.dp),
+                                        style = MaterialTheme.typography.bodySmall
+                                    )
+                                }
+                            }
+                        }
+                    }
+                },
+                confirmButton = {
+                    if (installResult == null) {
+                        Button(
+                            enabled = !installingApk,
+                            onClick = {
+                                val uri = target.uri.toUri()
+                                installingApk = true
+                                installError = null
+                                coroutineScope.launch {
+                                    try {
+                                        val descriptor = withContext(Dispatchers.IO) {
+                                            context.contentResolver.openFileDescriptor(uri, "r")
+                                                ?: throw FileNotFoundException("Android could not open this APK")
+                                        }
+                                        installResult = descriptor.use {
+                                            userServiceController.installApk(it)
+                                        }
+                                    } catch (exception: IOException) {
+                                        installError = exception.message ?: "Could not read the selected APK"
+                                    } catch (exception: SecurityException) {
+                                        installError = "Android denied access to the APK: ${exception.message ?: "permission denied"}"
+                                    } finally {
+                                        installingApk = false
+                                    }
+                                }
+                            }
+                        ) {
+                            Text(if (installError == null) "Install" else "Retry")
+                        }
+                    } else {
+                        TextButton(onClick = {
+                            apkToInstall = null
+                            installResult = null
+                            installError = null
+                        }) {
+                            Text("Close")
+                        }
+                    }
+                },
+                dismissButton = {
+                    if (installResult == null) {
+                        TextButton(
+                            enabled = !installingApk,
+                            onClick = {
+                                apkToInstall = null
+                                installError = null
+                            }
+                        ) {
+                            Text("Cancel")
+                        }
+                    }
+                }
+            )
         }
     }
 }
@@ -183,7 +313,11 @@ private fun HomeScreen(repository: ShizukuStatusRepository, padding: PaddingValu
 }
 
 @Composable
-private fun ProjectsScreen(padding: PaddingValues, onOpenFile: (ProjectFile) -> Unit) {
+private fun ProjectsScreen(
+    padding: PaddingValues,
+    onOpenFile: (ProjectFile) -> Unit,
+    onInstallApk: (ProjectFile) -> Unit
+) {
     val context = LocalContext.current
     val preferences = remember {
         context.getSharedPreferences("project_selection", Context.MODE_PRIVATE)
@@ -307,7 +441,7 @@ private fun ProjectsScreen(padding: PaddingValues, onOpenFile: (ProjectFile) -> 
                     .fillMaxWidth()
                     .then(
                         if (entry.isDirectory) Modifier.clickable { directoryStack.add(entry.document) }
-                        else if (entry.canRead) Modifier.clickable {
+                        else if (entry.canRead && !entry.isApk) Modifier.clickable {
                             onOpenFile(ProjectFile(entry.uri, entry.name, entry.canWrite))
                         }
                         else Modifier
@@ -331,13 +465,23 @@ private fun ProjectsScreen(padding: PaddingValues, onOpenFile: (ProjectFile) -> 
                         } else if (!entry.canRead) {
                             Text("Cannot read this file", style = MaterialTheme.typography.labelSmall)
                         }
+                        if (entry.isApk) {
+                            Button(
+                                enabled = entry.canRead,
+                                onClick = {
+                                    onInstallApk(ProjectFile(entry.uri, entry.name, entry.canWrite))
+                                }
+                            ) {
+                                Text("Install APK through Shizuku")
+                            }
+                        }
                     }
                 }
             }
         }
         item {
             Text(
-                "Text files up to 2 MiB can be edited. Linux synchronization and Git operations are not implemented yet.",
+                "Text files up to 2 MiB can be edited. APK installation requires an explicitly authorized Shizuku service. Linux synchronization and Git operations are not implemented yet.",
                 style = MaterialTheme.typography.bodySmall
             )
         }

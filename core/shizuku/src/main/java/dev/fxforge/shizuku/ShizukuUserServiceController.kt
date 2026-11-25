@@ -6,8 +6,10 @@ import android.content.ServiceConnection
 import android.content.pm.PackageManager
 import android.os.Bundle
 import android.os.IBinder
+import android.os.ParcelFileDescriptor
 import android.os.RemoteException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -45,6 +47,12 @@ data class ShizukuUserServiceStatus(
     val logcatTruncated: Boolean = false,
     val logcatError: String? = null,
     val error: String? = null
+)
+
+data class ShizukuApkInstallResult(
+    val success: Boolean,
+    val output: String,
+    val error: String?
 )
 
 class ShizukuUserServiceController(context: Context) {
@@ -156,6 +164,10 @@ class ShizukuUserServiceController(context: Context) {
     }
 
     suspend fun readDeviceInfo() {
+        operationPermissionError()?.let {
+            setError(it)
+            return
+        }
         val activeService = service
         if (activeService == null) {
             setError("Connect the Shizuku device service before requesting device information")
@@ -173,6 +185,13 @@ class ShizukuUserServiceController(context: Context) {
     }
 
     suspend fun readLogcat(maxLines: Int = LogcatLimits.DEFAULT_LINES) {
+        operationPermissionError()?.let {
+            mutableStatus.value = mutableStatus.value.copy(
+                logcatError = it,
+                logcatLoading = false
+            )
+            return
+        }
         val activeService = service
         if (activeService == null) {
             mutableStatus.value = mutableStatus.value.copy(
@@ -195,6 +214,8 @@ class ShizukuUserServiceController(context: Context) {
                 logcatTruncated = bundle.getBoolean(AndroidDeviceUserService.KEY_LOGCAT_TRUNCATED),
                 logcatError = bundle.getString(AndroidDeviceUserService.KEY_LOGCAT_ERROR)
             )
+        } catch (exception: CancellationException) {
+            throw exception
         } catch (exception: RemoteException) {
             if (service !== activeService) return
             mutableStatus.value = mutableStatus.value.copy(
@@ -210,6 +231,47 @@ class ShizukuUserServiceController(context: Context) {
         }
     }
 
+    suspend fun installApk(apkDescriptor: ParcelFileDescriptor): ShizukuApkInstallResult {
+        operationPermissionError()?.let {
+            apkDescriptor.close()
+            return ShizukuApkInstallResult(false, "", it)
+        }
+        val activeService = service
+            ?: return ShizukuApkInstallResult(
+                success = false,
+                output = "",
+                error = "Connect the Shizuku device service before installing an APK"
+            )
+        return try {
+            val bundle = withContext(Dispatchers.IO) {
+                activeService.installApk(apkDescriptor)
+            }
+            if (service !== activeService) {
+                ShizukuApkInstallResult(false, "", "Shizuku disconnected during APK installation")
+            } else {
+                ShizukuApkInstallResult(
+                    success = bundle.getBoolean(AndroidDeviceUserService.KEY_INSTALL_SUCCESS),
+                    output = bundle.getString(AndroidDeviceUserService.KEY_INSTALL_OUTPUT).orEmpty(),
+                    error = bundle.getString(AndroidDeviceUserService.KEY_INSTALL_ERROR)
+                )
+            }
+        } catch (exception: CancellationException) {
+            throw exception
+        } catch (exception: RemoteException) {
+            ShizukuApkInstallResult(
+                success = false,
+                output = "",
+                error = "APK installation request failed: ${exception.message ?: "remote service error"}"
+            )
+        } catch (exception: RuntimeException) {
+            ShizukuApkInstallResult(
+                success = false,
+                output = "",
+                error = "APK installation request failed: ${exception.message ?: "device service error"}"
+            )
+        }
+    }
+
     private fun setError(message: String) {
         mutableStatus.value = mutableStatus.value.copy(
             connecting = false,
@@ -217,7 +279,20 @@ class ShizukuUserServiceController(context: Context) {
         )
     }
 
+    private fun operationPermissionError(): String? {
+        if (!Shizuku.pingBinder()) return "Shizuku binder is not connected"
+        return try {
+            when {
+                Shizuku.isPreV11() -> "Shizuku API v11 or newer is required for device operations"
+                Shizuku.checkSelfPermission() == PackageManager.PERMISSION_GRANTED -> null
+                else -> "Grant FxForge Shizuku permission before using this device operation"
+            }
+        } catch (_: IllegalStateException) {
+            "Shizuku disconnected while checking permission"
+        }
+    }
+
     companion object {
-        private const val SERVICE_VERSION = 2
+        private const val SERVICE_VERSION = 3
     }
 }

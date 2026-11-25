@@ -3,6 +3,7 @@ package dev.fxforge.shizuku
 import android.os.Build
 import android.os.Bundle
 import android.os.Process
+import android.os.ParcelFileDescriptor
 import androidx.annotation.Keep
 import java.io.IOException
 import java.io.InputStreamReader
@@ -97,6 +98,15 @@ class AndroidDeviceUserService : IAndroidDeviceService.Stub() {
         }
     }
 
+    override fun installApk(apkDescriptor: ParcelFileDescriptor): Bundle {
+        val result = ShizukuApkInstaller.install(apkDescriptor, Process.myUid())
+        return Bundle().apply {
+            putBoolean(KEY_INSTALL_SUCCESS, result.success)
+            putString(KEY_INSTALL_OUTPUT, result.output)
+            putString(KEY_INSTALL_ERROR, result.error)
+        }
+    }
+
     override fun destroy() {
         System.exit(0)
     }
@@ -122,6 +132,9 @@ class AndroidDeviceUserService : IAndroidDeviceService.Stub() {
         const val KEY_LOGCAT_OUTPUT = "logcatOutput"
         const val KEY_LOGCAT_TRUNCATED = "logcatTruncated"
         const val KEY_LOGCAT_ERROR = "logcatError"
+        const val KEY_INSTALL_SUCCESS = "installSuccess"
+        const val KEY_INSTALL_OUTPUT = "installOutput"
+        const val KEY_INSTALL_ERROR = "installError"
         private const val LOGCAT_TIMEOUT_SECONDS = 8L
         private const val LOGCAT_READER_TIMEOUT_SECONDS = 2L
     }

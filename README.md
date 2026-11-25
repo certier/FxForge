@@ -6,7 +6,9 @@ affiliated with the OpenCode team.
 > **Current status:** this repository contains the Android application
 > foundation, persistent Storage Access Framework (SAF) project-folder
 > selection and browser, a native text editor for UTF-8 files up to 2 MiB, live
-> Shizuku binder/permission/privilege reporting, and device diagnostics.
+> Shizuku binder/permission/privilege reporting, device diagnostics, bounded
+> logcat capture, and user-confirmed APK installation from a selected project
+> folder.
 > Shizuku UserService can also return basic device facts, the actual
 > service-process UID, and a user-requested bounded logcat capture after
 > explicit permission. The editor uses Sora Editor
@@ -51,8 +53,13 @@ basic `Build` properties and its actual process UID, and can capture up to 500
 logcat lines on explicit request. Log output is capped at 64 KiB of text,
 collected through fixed `logcat` arguments (not a shell command string), and
 is shown in the app only; logs may contain sensitive device data. No arbitrary
-command execution or privileged filesystem access is exposed. Package
-installation is not implemented.
+command execution or privileged filesystem access is exposed. A user-selected
+APK can be installed after a separate in-app confirmation, and only when the
+service reports root or ADB-shell UID. The service streams the document into a
+temporary file, caps the file at 512 MiB, runs Android's package manager with
+fixed arguments and a 120-second timeout, limits captured output to 8 KiB, and
+removes the temporary APK afterward. Android package-manager policy and
+signature checks still apply; split APKs and app launching are not implemented.
 
 ## Compatibility research and constraints
 
