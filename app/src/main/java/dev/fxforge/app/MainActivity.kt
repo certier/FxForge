@@ -465,6 +465,7 @@ private fun OpenCodeScreen(
             ) {
                 Column {
                     Text("OpenCode · localhost:4096", fontWeight = FontWeight.SemiBold)
+                    mcpError?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
                     Text(
                         (workspaceState.name ?: "No project workspace") + " · " +
                             if (mcpState.running) {
