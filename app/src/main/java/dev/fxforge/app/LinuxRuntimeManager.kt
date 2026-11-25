@@ -1074,6 +1074,9 @@ class LinuxRuntimeManager(context: Context) {
         private const val PROOT_LOADER = "libfxforge_proot_loader.so"
         private const val PROOT_LOADER_32 = "libfxforge_proot_loader32.so"
         private const val MAX_COMMAND_CHARS = 8192
+        private const val MAX_TERMINAL_OUTPUT_CHARS = 64 * 1024
+        private const val MAX_TERMINAL_TIMEOUT_SECONDS = 3600
+        private const val MAX_BUILD_OUTPUT_CHARS = 256 * 1024
         private const val MAX_OUTPUT_CHARS = 64 * 1024
         private const val MAX_COMMAND_TIMEOUT_SECONDS = 3600
         private const val MIN_SDK_FREE_SPACE_BYTES = 4L * 1024L * 1024L * 1024L
