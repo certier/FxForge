@@ -3,19 +3,19 @@
 FxForge is an independent Android development-workstation project. It is not
 affiliated with the OpenCode team.
 
-> **Current status:** FxForge now includes a native Android app, SAF project
+> **Current status:** FxForge includes a native Android app, SAF project
 > browser/editor, Kotlin + Compose project scaffolder, Shizuku device diagnostics,
-> bounded logcat, user-initiated Android shell commands, APK installation, and
-> a build pipeline that packages an ARM64 PRoot executable. The Environment
-> screen can install a checksum-pinned Debian Bookworm ARM64 root filesystem,
-> Java 17, Android SDK Platform 36, ARM64 Build Tools 36.0.0, and Gradle 8.13.
-> Projects can be synchronized from SAF into the private Linux workspace and
-> built into a debug APK. OpenCode can be installed in Debian and launched as a
-> local server with its web interface embedded in the app. The Android shell
-> console still starts a fresh `/system/bin/sh` process per command; it is not
-> a persistent PTY. Physical-device validation of the PRoot, Debian, SDK, and
-> OpenCode runtime is still required. The Android MCP bridge and a persistent
-> PTY terminal are not implemented yet.
+> bounded logcat, Android shell commands, APK installation, and an ARM64 PRoot
+> executable. The app can install a checksum-pinned Debian Bookworm ARM64 root
+> filesystem, Java 17, Android SDK Platform 36, ARM64 Build Tools 36.0.0, and
+> Gradle 8.13. It can sync SAF projects into a private Linux workspace and build
+> debug APKs. OpenCode can be installed in Debian and its authenticated web UI
+> embedded in the app. An authenticated loopback MCP bridge exposes device facts
+> and logcat; shell, APK installation, and app launching are separately gated
+> by an explicit full-device-control toggle. The Debian Bash session persists
+> across commands but uses pipes rather than a kernel PTY, so full-screen
+> interactive terminal programs are not supported. Physical-device validation
+> of PRoot, Debian, the SDK toolchain, OpenCode, and Shizuku MCP remains required.
 
 ## Build the Android app
 
