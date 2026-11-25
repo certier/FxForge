@@ -803,6 +803,10 @@ private fun EnvironmentScreen(padding: PaddingValues, linuxRuntimeManager: Linux
     val scope = rememberCoroutineScope()
     var probingProot by remember { mutableStateOf(false) }
     var prootProbe by remember { mutableStateOf<ProotProbeResult?>(null) }
+    val linuxState by linuxRuntimeManager.state.collectAsState()
+    var linuxCommand by remember { mutableStateOf("uname -a && cat /etc/os-release") }
+    var runningLinuxCommand by remember { mutableStateOf(false) }
+    var linuxCommandResult by remember { mutableStateOf<LinuxCommandResult?>(null) }
     val items = listOf(
         "Android release" to Build.VERSION.RELEASE,
         "API level" to Build.VERSION.SDK_INT.toString(),
@@ -826,6 +830,78 @@ private fun EnvironmentScreen(padding: PaddingValues, linuxRuntimeManager: Linux
             Text("Values below are queried from the current Android device; missing runtime components are explicitly marked.")
         }
         items(items) { (name, value) -> InfoCard(name, value) }
+        item {
+            Text("Debian Linux environment", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
+            InfoCard(
+                "Linux root filesystem",
+                when {
+                    linuxState.installed -> "Debian Bookworm ARM64 is installed in FxForge private storage."
+                    linuxState.installing -> linuxState.phase
+                    else -> "Not installed. The compressed root filesystem is about 27 MiB; extraction needs additional free space."
+                }
+            )
+            if (linuxState.installing) {
+                CircularProgressIndicator()
+                val progress = if (linuxState.totalBytes > 0) {
+                    (linuxState.downloadedBytes * 100 / linuxState.totalBytes).toInt().coerceIn(0, 100)
+                } else 0
+                Text(linuxState.phase + " · " + progress + "%")
+            }
+            linuxState.error?.let {
+                Text(it, color = MaterialTheme.colorScheme.error)
+            }
+            if (!linuxState.installed) {
+                Button(
+                    enabled = !linuxState.installing && linuxRuntimeManager.isProotAvailable(),
+                    onClick = {
+                        scope.launch { linuxRuntimeManager.installDebian() }
+                    }
+                ) {
+                    Text(if (linuxState.installing) "Installing Debian…" else "Install Debian ARM64")
+                }
+            } else {
+                OutlinedTextField(
+                    value = linuxCommand,
+                    onValueChange = { linuxCommand = it },
+                    modifier = Modifier.fillMaxWidth(),
+                    label = { Text("Linux command") },
+                    minLines = 2,
+                    maxLines = 4,
+                    enabled = !runningLinuxCommand
+                )
+                Button(
+                    enabled = !runningLinuxCommand && linuxCommand.isNotBlank(),
+                    onClick = {
+                        runningLinuxCommand = true
+                        scope.launch {
+                            linuxCommandResult = linuxRuntimeManager.runCommand(linuxCommand)
+                            runningLinuxCommand = false
+                        }
+                    }
+                ) {
+                    Text(if (runningLinuxCommand) "Running in Debian…" else "Run in Debian")
+                }
+                if (runningLinuxCommand) CircularProgressIndicator()
+                linuxCommandResult?.let { result ->
+                    InfoCard(
+                        "Linux command result",
+                        result.error ?: "Exit code: " + (result.exitCode?.toString() ?: "unknown")
+                    )
+                    if (result.truncated) {
+                        Text("Linux output reached the 64 KiB limit.")
+                    }
+                    Card(Modifier.fillMaxWidth()) {
+                        SelectionContainer {
+                            Text(
+                                result.output.ifBlank { result.error ?: "(no output)" },
+                                modifier = Modifier.fillMaxWidth().heightIn(max = 320.dp).verticalScroll(rememberScrollState()).padding(12.dp),
+                                style = MaterialTheme.typography.bodySmall
+                            )
+                        }
+                    }
+                }
+            }
+        }
         item {
             Button(
                 enabled = !probingProot && ProotBinaryRuntime.isBundled(context),
