@@ -3,20 +3,18 @@
 FxForge is an independent Android development-workstation project. It is not
 affiliated with the OpenCode team.
 
-> **Current status:** this repository contains the Android application
-> foundation, persistent Storage Access Framework (SAF) project-folder
-> selection and browser, a native text editor for UTF-8 files up to 2 MiB, live
-> Shizuku binder/permission/privilege reporting, device diagnostics, bounded
-> logcat capture, and user-confirmed APK installation from a selected project
-> folder.
-> Shizuku UserService can also return basic device facts, the actual
-> service-process UID, and a user-requested bounded logcat capture after
-> explicit permission. The editor uses Sora Editor
-> and currently applies Java syntax support to `.java` files; other files are
-> edited as plain text. The app does **not** yet contain a Linux userland,
-> OpenCode runtime, PTY terminal, in-app Android SDK installer/build toolchain,
-> Git integration, or Android MCP bridge. No screen reports those capabilities
-> as operational.
+> **Current status:** this repository contains a native Android application
+> foundation, persistent Storage Access Framework (SAF) project-folder selection
+> and browser, a Kotlin + Jetpack Compose Android project scaffold generator,
+> a Sora text editor for UTF-8 files up to 2 MiB, Shizuku binder/permission/
+> privilege reporting, device diagnostics, bounded logcat capture, a user-
+> initiated Android shell command console, and user-confirmed APK installation.
+> The shell console starts a fresh `/system/bin/sh` process per command through
+> Shizuku. It is bounded to 60 seconds, 8 KiB of command text, and 64 KiB of
+> output; it is **not** a persistent PTY. The app does **not** yet contain a
+> Linux userland, OpenCode runtime, persistent PTY terminal, in-app Android SDK
+> installer/build toolchain, Git integration, or Android MCP bridge. No screen
+> reports those capabilities as operational.
 
 ## Build the Android app
 
