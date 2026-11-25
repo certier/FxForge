@@ -132,6 +132,7 @@ private fun FxForgeApp(
     var projectToBuild by remember { mutableStateOf<DocumentFile?>(null) }
     var buildingProject by remember { mutableStateOf(false) }
     var buildResult by remember { mutableStateOf<AndroidBuildResult?>(null) }
+    var projectsRefreshToken by remember { mutableStateOf(0) }
 
     Box(Modifier.fillMaxSize()) {
         Scaffold(
@@ -163,6 +164,7 @@ private fun FxForgeApp(
                     if (file == null) {
                         ProjectsScreen(
                             padding,
+                            refreshToken = projectsRefreshToken,
                             onOpenFile = { openFile = it },
                             onInstallApk = {
                                 apkToInstall = it
@@ -246,7 +248,9 @@ private fun FxForgeApp(
                                 buildingProject = true
                                 buildResult = null
                                 coroutineScope.launch {
-                                    buildResult = linuxRuntimeManager.buildProject(target)
+                                    val result = linuxRuntimeManager.buildProject(target)
+                                    buildResult = result
+                                    if (result.success) projectsRefreshToken += 1
                                     buildingProject = false
                                 }
                             }
@@ -907,6 +911,7 @@ private fun LinuxTerminalPanel(
 @Composable
 private fun ProjectsScreen(
     padding: PaddingValues,
+    refreshToken: Int,
     onOpenFile: (ProjectFile) -> Unit,
     onInstallApk: (ProjectFile) -> Unit,
     onBuildProject: (DocumentFile) -> Unit
@@ -945,7 +950,7 @@ private fun ProjectsScreen(
     }
 
     val currentDirectory = directoryStack.lastOrNull()
-    LaunchedEffect(currentDirectory) {
+    LaunchedEffect(currentDirectory, refreshToken) {
         if (currentDirectory == null) {
             entries = emptyList()
             currentDirectoryName = null
