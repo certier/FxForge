@@ -22,6 +22,8 @@ import java.net.URL
 import java.nio.file.Files
 import java.nio.file.Paths
 import java.security.MessageDigest
+import java.security.SecureRandom
+import java.util.Base64
 import java.util.concurrent.ExecutionException
 import java.util.concurrent.FutureTask
 import java.util.concurrent.TimeUnit
@@ -43,6 +45,15 @@ data class LinuxCommandResult(
     val error: String? = null
 )
 
+data class OpenCodeState(
+    val installed: Boolean = false,
+    val installing: Boolean = false,
+    val starting: Boolean = false,
+    val running: Boolean = false,
+    val error: String? = null,
+    val output: String? = null
+)
+
 private object DebianRootfs {
     const val ARCHIVE_SIZE = 28_144_305L
     const val SHA256 = "7f1aa0b5c351d0542b2066749ed47608e5873bcdd1fd14f4df6f0a05cac02f8e"
@@ -56,6 +67,12 @@ class LinuxRuntimeManager(context: Context) {
     private val rootfsDirectory = File(runtimeDirectory, DebianRootfs.VERSION)
     private val markerFile = File(rootfsDirectory, ".fxforge-rootfs-version")
     private val downloadFile = File(appContext.cacheDir, "debian-bookworm-arm64.tar.gz")
+    private val openCodeBinary = File(rootfsDirectory, "root/.opencode/bin/opencode")
+    private var openCodeProcess: Process? = null
+    @Volatile private var openCodePassword: String? = null
+    private val mutableOpenCodeState = MutableStateFlow(OpenCodeState(installed = openCodeBinary.isFile))
+    val openCodeState: StateFlow<OpenCodeState> = mutableOpenCodeState.asStateFlow()
+    val openCodeUrl: String = "http://localhost:4096"
     private val mutableState = MutableStateFlow(
         LinuxRuntimeState(
             installed = markerFile.isFile,
@@ -109,6 +126,181 @@ class LinuxRuntimeManager(context: Context) {
                 phase = "Installation failed",
                 error = exception.message ?: "Debian installation failed."
             )
+        }
+    }
+
+    suspend fun installOpenCode() = withContext(Dispatchers.IO) {
+        if (!markerFile.isFile) {
+            mutableOpenCodeState.value = mutableOpenCodeState.value.copy(
+                error = "Install Debian before installing OpenCode."
+            )
+            return@withContext
+        }
+        if (openCodeBinary.isFile) {
+            mutableOpenCodeState.value = OpenCodeState(installed = true)
+            return@withContext
+        }
+        mutableOpenCodeState.value = OpenCodeState(installing = true)
+        val installResult = runCommand(
+            "apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y ca-certificates curl git && curl -fsSL https://opencode.ai/v2/install | bash && /root/.opencode/bin/opencode --version",
+            timeoutSeconds = 900
+        )
+        val installed = openCodeBinary.isFile
+        mutableOpenCodeState.value = OpenCodeState(
+            installed = installed,
+            error = if (installed) null else installResult.error
+                ?: "OpenCode installation did not create /root/.opencode/bin/opencode.",
+            output = installResult.output
+        )
+    }
+
+    suspend fun startOpenCode() = withContext(Dispatchers.IO) {
+        if (!openCodeBinary.isFile) {
+            mutableOpenCodeState.value = mutableOpenCodeState.value.copy(
+                error = "Install OpenCode before starting its server."
+            )
+            return@withContext
+        }
+        if (openCodeProcess?.isAlive == true) {
+            mutableOpenCodeState.value = OpenCodeState(installed = true, running = true)
+            return@withContext
+        }
+        mutableOpenCodeState.value = OpenCodeState(installed = true, starting = true)
+        val password = openCodePassword ?: createOpenCodePassword().also { openCodePassword = it }
+        val temporaryDirectory = File(appContext.cacheDir, "proot-tmp")
+        if (!temporaryDirectory.exists()) temporaryDirectory.mkdirs()
+        val binary = File(appContext.applicationInfo.nativeLibraryDir, PROOT_BINARY)
+        val loader = File(appContext.applicationInfo.nativeLibraryDir, PROOT_LOADER)
+        val loader32 = File(appContext.applicationInfo.nativeLibraryDir, PROOT_LOADER_32)
+        val process = try {
+            ProcessBuilder(
+                binary.absolutePath,
+                "--link2symlink",
+                "-0",
+                "-r", rootfsDirectory.absolutePath,
+                "-b", "/dev",
+                "-b", "/proc",
+                "-b", "/sys",
+                "-w", "/root",
+                "/usr/bin/env",
+                "HOME=/root",
+                "PATH=/root/.opencode/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+                "TERM=xterm-256color",
+                "OPENCODE_PASSWORD=" + password,
+                "/root/.opencode/bin/opencode",
+                "serve",
+                "--hostname", "127.0.0.1",
+                "--port", OPEN_CODE_PORT.toString()
+            ).directory(rootfsDirectory)
+                .redirectErrorStream(true)
+                .apply {
+                    environment()["PROOT_TMP_DIR"] = temporaryDirectory.absolutePath
+                    environment()["PROOT_LOADER"] = loader.absolutePath
+                    environment()["PROOT_LOADER_32"] = loader32.absolutePath
+                    environment()["PROOT_NO_SECCOMP"] = "1"
+                }
+                .start()
+        } catch (exception: Exception) {
+            mutableOpenCodeState.value = OpenCodeState(
+                installed = true,
+                error = "Could not start OpenCode: " + (exception.message ?: "process error")
+            )
+            return@withContext
+        }
+        openCodeProcess = process
+        captureOpenCodeOutput(process)
+        var ready = false
+        repeat(OPEN_CODE_START_ATTEMPTS) {
+            if (!process.isAlive) return@repeat
+            if (isOpenCodeServerReady(password)) {
+                ready = true
+                return@repeat
+            }
+            Thread.sleep(OPEN_CODE_POLL_INTERVAL_MS)
+        }
+        if (ready && process.isAlive) {
+            mutableOpenCodeState.value = OpenCodeState(installed = true, running = true)
+        } else {
+            process.destroyForcibly()
+            openCodeProcess = null
+            val log = File(appContext.filesDir, "linux/opencode-server.log")
+            mutableOpenCodeState.value = OpenCodeState(
+                installed = true,
+                error = if (!process.isAlive) {
+                    "OpenCode server exited before it became ready."
+                } else {
+                    "OpenCode server did not become ready within the startup timeout."
+                },
+                output = if (log.isFile) log.readText().takeLast(4000) else null
+            )
+        }
+    }
+
+    suspend fun stopOpenCode() = withContext(Dispatchers.IO) {
+        val process = openCodeProcess
+        if (process != null && process.isAlive) {
+            process.destroy()
+            if (!process.waitFor(3, TimeUnit.SECONDS)) process.destroyForcibly()
+        }
+        openCodeProcess = null
+        openCodePassword = null
+        mutableOpenCodeState.value = OpenCodeState(installed = openCodeBinary.isFile)
+    }
+
+    fun openCodeCredentials(): Pair<String, String>? =
+        openCodePassword?.let { "opencode" to it }
+
+    private fun createOpenCodePassword(): String {
+        val bytes = ByteArray(32)
+        SecureRandom().nextBytes(bytes)
+        return Base64.getUrlEncoder().withoutPadding().encodeToString(bytes)
+    }
+
+    private fun isOpenCodeServerReady(password: String): Boolean {
+        val connection = try {
+            URL("http://127.0.0.1:" + OPEN_CODE_PORT + "/api/info").openConnection() as HttpURLConnection
+        } catch (_: IOException) {
+            return false
+        }
+        return try {
+            connection.connectTimeout = 500
+            connection.readTimeout = 500
+            val token = Base64.getEncoder().encodeToString(("opencode:" + password).toByteArray(Charsets.UTF_8))
+            connection.setRequestProperty("Authorization", "Basic " + token)
+            connection.responseCode in 200..299
+        } catch (_: IOException) {
+            false
+        } finally {
+            connection.disconnect()
+        }
+    }
+
+    private fun captureOpenCodeOutput(process: Process) {
+        val logFile = File(appContext.filesDir, "linux/opencode-server.log")
+        logFile.parentFile?.mkdirs()
+        Thread({
+            try {
+                process.inputStream.use { input ->
+                    FileOutputStream(logFile, false).use { output ->
+                        val buffer = ByteArray(4096)
+                        var total = 0
+                        while (true) {
+                            val count = input.read(buffer)
+                            if (count < 0) break
+                            val remaining = MAX_SERVER_LOG_BYTES - total
+                            if (remaining <= 0) break
+                            val writeCount = minOf(count, remaining)
+                            output.write(buffer, 0, writeCount)
+                            total += writeCount
+                        }
+                    }
+                }
+            } catch (_: IOException) {
+                // The server process may close its stream during shutdown.
+            }
+        }, "fxforge-opencode-log").apply {
+            isDaemon = true
+            start()
         }
     }
 
@@ -361,7 +553,11 @@ class LinuxRuntimeManager(context: Context) {
         private const val PROOT_LOADER_32 = "libfxforge_proot_loader32.so"
         private const val MAX_COMMAND_CHARS = 8192
         private const val MAX_OUTPUT_CHARS = 64 * 1024
-        private const val MAX_COMMAND_TIMEOUT_SECONDS = 60
+        private const val MAX_COMMAND_TIMEOUT_SECONDS = 900
+        private const val OPEN_CODE_PORT = 4096
+        private const val OPEN_CODE_START_ATTEMPTS = 40
+        private const val OPEN_CODE_POLL_INTERVAL_MS = 250L
+        private const val MAX_SERVER_LOG_BYTES = 512 * 1024
         private const val MIN_FREE_SPACE_BYTES = 160L * 1024L * 1024L
         private const val CONNECT_TIMEOUT_MS = 20_000
         private const val READ_TIMEOUT_MS = 60_000
