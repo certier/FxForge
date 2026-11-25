@@ -9,12 +9,14 @@ affiliated with the OpenCode team.
 > a Sora text editor for UTF-8 files up to 2 MiB, Shizuku binder/permission/
 > privilege reporting, device diagnostics, bounded logcat capture, a user-
 > initiated Android shell command console, and user-confirmed APK installation.
+> The ARM64 APK build embeds a PRoot executable and its loaders, built from
+> pinned source with the Android NDK. This is only the container engine: a
+> Linux root filesystem, persistent PTY, and OpenCode are not yet installed.
 > The shell console starts a fresh `/system/bin/sh` process per command through
 > Shizuku. It is bounded to 60 seconds, 8 KiB of command text, and 64 KiB of
-> output; it is **not** a persistent PTY. The app does **not** yet contain a
-> Linux userland, OpenCode runtime, persistent PTY terminal, in-app Android SDK
-> installer/build toolchain, Git integration, or Android MCP bridge. No screen
-> reports those capabilities as operational.
+> output; it is **not** a persistent PTY. The app does **not** yet contain an
+> installed Linux userland, OpenCode runtime, persistent PTY terminal, in-app
+> Android SDK installer/build toolchain, Git integration, or Android MCP bridge.
 
 ## Build the Android app
 
@@ -22,7 +24,19 @@ Requirements:
 
 - JDK 17
 - Android SDK Platform 36 and Android SDK Build Tools 36.0.0
+- Android NDK 28.2.13676358 (r28c) for the ARM64 PRoot payload
 - Gradle wrapper (the project pins Gradle 8.13)
+
+Before a local ARM64 build, stage the PRoot executable into the APK's
+native-library directory. This requires Git, Python 3, and NDK r28c:
+
+```sh
+ANDROID_NDK_HOME="$ANDROID_HOME/ndk/28.2.13676358" \
+  bash scripts/build-proot-android-arm64.sh
+```
+
+GitHub Actions performs this step automatically, runs unit tests, assembles the
+debug APK, and uploads the APK and PRoot artifacts.
 
 Open the repository in Android Studio or build from a shell after installing
 the SDK:
