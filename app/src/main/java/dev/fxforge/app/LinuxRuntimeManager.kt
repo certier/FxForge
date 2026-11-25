@@ -546,7 +546,6 @@ class LinuxRuntimeManager(context: Context) {
                     "ANDROID_HOME=/opt/android-sdk",
                     "ANDROID_SDK_ROOT=/opt/android-sdk",
                     "GRADLE_USER_HOME=/root/.gradle",
-                    "ORG_GRADLE_PROJECT_android_aapt2FromMavenOverride=/opt/android-sdk/build-tools/36.0.0/aapt2",
                     "TERM=xterm-256color",
                     "/bin/sh",
                     "-lc",
