@@ -55,6 +55,13 @@ data class ShizukuApkInstallResult(
     val error: String?
 )
 
+data class ShizukuCommandResult(
+    val output: String,
+    val exitCode: Int?,
+    val truncated: Boolean,
+    val error: String?
+)
+
 class ShizukuUserServiceController(context: Context) {
     private val appContext = context.applicationContext
     private val mutableStatus = MutableStateFlow(ShizukuUserServiceStatus())
@@ -231,6 +238,45 @@ class ShizukuUserServiceController(context: Context) {
         }
     }
 
+    suspend fun executeCommand(command: String, timeoutSeconds: Int = 30): ShizukuCommandResult {
+        operationPermissionError()?.let {
+            return ShizukuCommandResult("", null, false, it)
+        }
+        val activeService = service
+            ?: return ShizukuCommandResult(
+                "", null, false,
+                "Connect the Shizuku device service before running shell commands"
+            )
+        if (command.isBlank()) {
+            return ShizukuCommandResult("", null, false, "Enter a command first")
+        }
+        if (command.length > MAX_COMMAND_CHARS) {
+            return ShizukuCommandResult("", null, false, "Command exceeds the $MAX_COMMAND_CHARS character limit")
+        }
+        return try {
+            val bundle = withContext(Dispatchers.IO) {
+                activeService.executeCommand(command, timeoutSeconds.coerceIn(1, MAX_COMMAND_TIMEOUT_SECONDS))
+            }
+            if (service !== activeService) {
+                ShizukuCommandResult("", null, false, "Shizuku disconnected while the command was running")
+            } else {
+                ShizukuCommandResult(
+                    output = bundle.getString(AndroidDeviceUserService.KEY_COMMAND_OUTPUT).orEmpty(),
+                    exitCode = bundle.getInt(AndroidDeviceUserService.KEY_COMMAND_EXIT_CODE, -1)
+                        .takeIf { it >= 0 },
+                    truncated = bundle.getBoolean(AndroidDeviceUserService.KEY_COMMAND_TRUNCATED),
+                    error = bundle.getString(AndroidDeviceUserService.KEY_COMMAND_ERROR)
+                )
+            }
+        } catch (exception: CancellationException) {
+            throw exception
+        } catch (exception: RemoteException) {
+            ShizukuCommandResult("", null, false, "Shell command failed: ${exception.message ?: "remote service error"}")
+        } catch (exception: RuntimeException) {
+            ShizukuCommandResult("", null, false, "Shell command failed: ${exception.message ?: "device service error"}")
+        }
+    }
+
     suspend fun installApk(apkDescriptor: ParcelFileDescriptor): ShizukuApkInstallResult {
         operationPermissionError()?.let {
             apkDescriptor.close()
@@ -293,6 +339,8 @@ class ShizukuUserServiceController(context: Context) {
     }
 
     companion object {
-        private const val SERVICE_VERSION = 3
+        private const val SERVICE_VERSION = 4
+        private const val MAX_COMMAND_CHARS = 8192
+        private const val MAX_COMMAND_TIMEOUT_SECONDS = 60
     }
 }
