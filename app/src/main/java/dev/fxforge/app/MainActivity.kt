@@ -957,9 +957,9 @@ private fun EnvironmentScreen(padding: PaddingValues, linuxRuntimeManager: Linux
         "App private storage" to context.filesDir.absolutePath,
         "Bundled PRoot binary" to if (ProotBinaryRuntime.isBundled(context)) "ARM64 executable and loader extracted" else "Unavailable for this ABI",
         "Android SDK" to if (sdkState.installed) "API 36 · ARM64 Build Tools · Gradle 8.13" else "Not installed",
-        "Linux userland / PTY" to "Debian installed · persistent PTY not available",
+        "Linux userland / PTY" to if (linuxState.installed) "Debian Bookworm ARM64 installed · persistent PTY not available" else "Not installed",
         "OpenCode" to "Not installed",
-        "Android SDK build tools" to "Not installed in this app"
+        "Android SDK build tools" to if (sdkState.installed) "ARM64 AAPT2, AIDL, ZIPALIGN, split-select" else "Not installed"
     )
     if (showSdkLicense) {
         AlertDialog(
