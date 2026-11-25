@@ -410,6 +410,12 @@ private fun ProjectsScreen(
     onInstallApk: (ProjectFile) -> Unit
 ) {
     val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    var showCreateProject by remember { mutableStateOf(false) }
+    var projectName by remember { mutableStateOf("MyAndroidApp") }
+    var packageName by remember { mutableStateOf("com.example.myandroidapp") }
+    var creatingProject by remember { mutableStateOf(false) }
+    var createProjectError by remember { mutableStateOf<String?>(null) }
     val preferences = remember {
         context.getSharedPreferences("project_selection", Context.MODE_PRIVATE)
     }
@@ -513,6 +519,14 @@ private fun ProjectsScreen(
             Button(onClick = { folderPicker.launch(null) }) {
                 Text(if (selectedUri == null) "Choose project folder" else "Change project folder")
             }
+            if (currentDirectory?.canWrite() == true) {
+                Button(onClick = {
+                    createProjectError = null
+                    showCreateProject = true
+                }) {
+                    Text("Create Android project")
+                }
+            }
         }
         if (directoryStack.size > 1) {
             item {
@@ -577,6 +591,78 @@ private fun ProjectsScreen(
             )
         }
     }
+    if (showCreateProject) {
+        val validationError = ProjectScaffolder.validate(projectName.trim(), packageName.trim())
+        AlertDialog(
+            onDismissRequest = { if (!creatingProject) showCreateProject = false },
+            title = { Text("New Android project") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedTextField(
+                        value = projectName,
+                        onValueChange = { projectName = it },
+                        label = { Text("Project name") },
+                        singleLine = true,
+                        enabled = !creatingProject
+                    )
+                    OutlinedTextField(
+                        value = packageName,
+                        onValueChange = { packageName = it },
+                        label = { Text("Application ID") },
+                        singleLine = true,
+                        enabled = !creatingProject
+                    )
+                    Text(
+                        "Creates a Kotlin + Jetpack Compose project with Gradle Kotlin DSL and Android SDK 36 files in the selected folder."
+                    )
+                    validationError?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+                    createProjectError?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+                    if (creatingProject) CircularProgressIndicator()
+                }
+            },
+            confirmButton = {
+                Button(
+                    enabled = !creatingProject && validationError == null && currentDirectory?.canWrite() == true,
+                    onClick = {
+                        val parent = currentDirectory ?: return@Button
+                        creatingProject = true
+                        createProjectError = null
+                        scope.launch {
+                            try {
+                                val created = withContext(Dispatchers.IO) {
+                                    ProjectScaffolder.create(
+                                        context,
+                                        parent,
+                                        projectName.trim(),
+                                        packageName.trim()
+                                    )
+                                }
+                                directoryStack.add(created)
+                                showCreateProject = false
+                                projectName = "MyAndroidApp"
+                                packageName = "com.example.myandroidapp"
+                            } catch (exception: Exception) {
+                                createProjectError = exception.message ?: "Could not create the Android project."
+                            } finally {
+                                creatingProject = false
+                            }
+                        }
+                    }
+                ) {
+                    Text(if (creatingProject) "Creating…" else "Create project")
+                }
+            },
+            dismissButton = {
+                TextButton(
+                    enabled = !creatingProject,
+                    onClick = { showCreateProject = false }
+                ) {
+                    Text("Cancel")
+                }
+            }
+        )
+    }
+
 }
 
 @Composable
