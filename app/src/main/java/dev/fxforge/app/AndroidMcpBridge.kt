@@ -13,6 +13,7 @@ import dev.fxforge.shizuku.ShizukuUserServiceController
 import java.io.BufferedInputStream
 import java.io.ByteArrayOutputStream
 import java.io.IOException
+import java.io.File
 import java.net.InetAddress
 import java.net.ServerSocket
 import java.net.Socket
