@@ -50,54 +50,74 @@ targets API 36 and currently supports Android API 26 and later. The Kotlin app
 uses Android's managed runtime; this does not imply that Linux ARM64 binaries
 or glibc programs can run on Android.
 
-## Shizuku
+## Android device integration
 
 Install and start Shizuku (or Sui) separately, then grant FxForge permission
-from the Device screen. Shizuku started through wireless debugging normally
-runs with the Android shell UID (2000), not root (UID 0). FxForge displays the
-UID actually reported by Shizuku and does not infer root access from a granted
-permission. On non-root setups, Shizuku may need to be started again after a
-device reboot.
+from the Device screen. FxForge reports the UID actually used by its Shizuku
+UserService: root (0), ADB shell (2000), or another UID. A granted Shizuku
+permission is not described as root unless the service reports UID 0.
 
-The UserService is non-daemon and explicitly unbound by FxForge. It reports
-basic `Build` properties and its actual process UID, and can capture up to 500
-logcat lines on explicit request. Log output is capped at 64 KiB of text,
-collected through fixed `logcat` arguments (not a shell command string), and
-is shown in the app only; logs may contain sensitive device data. No arbitrary
-command execution or privileged filesystem access is exposed. A user-selected
-APK can be installed after a separate in-app confirmation, and only when the
-service reports root or ADB-shell UID. The service streams the document into a
-temporary file, caps the file at 512 MiB, runs Android's package manager with
-fixed arguments and a 120-second timeout, limits captured output to 8 KiB, and
-removes the temporary APK afterward. Android package-manager policy and
-signature checks still apply; split APKs and app launching are not implemented.
+The Device screen exposes device facts, bounded logcat capture, and a command
+console. APK installation uses a user-selected document and a separate
+confirmation dialog; it is limited to root or ADB-shell service UIDs, a
+512 MiB APK, a 120-second timeout, and bounded output. Android package-manager
+signature and policy checks still apply.
 
-## Compatibility research and constraints
+The OpenCode integration can start an authenticated loopback MCP bridge. It
+exposes device facts and logcat in read-only mode. Shell commands, APK
+installation, and launching installed apps are added only after the user
+enables the separate full-device-control toggle. Shell commands are powerful
+and can change device state; review AI-proposed commands and keep this toggle
+off unless those capabilities are required. The bridge binds to loopback,
+uses a random bearer token, and is stopped when OpenCode is stopped.
 
-- The Android application uses Kotlin, Jetpack Compose, Android Gradle Plugin
-  8.13.2, and Android SDK API 36.
-- The Shizuku API is consumed from its published Maven artifact (13.1.5); the
-  upstream API documentation describes binder lifecycle, permission requests,
-  UID reporting, and the difference between shell and root backends.
-- OpenCode's official documentation describes local MCP servers as processes
-  launched over stdio. Its Linux release binaries are not assumed to be
-  Android-compatible: ABI alone does not establish Android syscall, libc,
-  terminal, or filesystem compatibility. No OpenCode binary is bundled or
-  executed by this repository yet.
-- No ARM64 AAPT2/AIDL distribution has been selected or verified. Google's
-  host build tools are not treated as ARM64-compatible by assumption.
-- No Android device is attached to this development environment. The APK
-  builds locally, but physical Shizuku validation remains unverified.
+## Linux runtime and Android build toolchain
 
-## Security and data
+The ARM64 APK build embeds a statically linked PRoot executable and its
+loaders. The Debian Bookworm ARM64 root filesystem is downloaded from a
+pinned OCI layer and checked against its SHA-256 digest before extraction.
+The Linux rootfs and all downloaded SDK packages live in FxForge's private
+app storage; installation requires substantial free space and network access.
 
-Project folders are selected using Android's Storage Access Framework and
-persisted URI permissions. The editor strictly decodes UTF-8, rejects invalid
-UTF-8 and NUL-containing content, and bounds reads and writes to 2 MiB.
-FxForge does not request broad shared-storage access. Shizuku permission is
-user-granted through Shizuku; app status is reported as unavailable until its
-binder is reachable.
+The in-app SDK setup installs Java 17, Android SDK Platform 36, Build Tools
+36.0.0, and Gradle 8.13. Google's command-line SDK manager is used to install
+the SDK packages after the user accepts the linked SDK terms. Android's
+host-side Linux build-tools executables are not assumed to work on ARM64:
+FxForge replaces the required AAPT2, AIDL, ZIPALIGN, and split-select binaries
+with separately sourced ARM64 builds whose SHA-256 digests are checked.
+This is an ARM64 Android application build toolchain; it does not include the
+Android NDK or claim support for native C/C++ Android builds.
 
+Projects are copied from a user-selected Storage Access Framework (SAF) tree
+into a private Linux workspace before builds. FxForge syncs generated source
+and APK artifacts back to the selected tree. The workspace copier excludes
+build caches and local machine properties and enforces file-count, nesting,
+and transfer-size limits.
+
+The Linux shell preserves its Bash process, working directory, and environment
+between commands. It uses process pipes rather than a kernel PTY, so
+full-screen interactive programs, terminal multiplexers, and applications
+requiring terminal ioctl support are not supported. OpenCode's local server
+is launched as a Linux ARM64 process inside Debian and its authenticated web
+interface is embedded in the app. This is not a general-purpose Android
+desktop or virtual machine.
+
+## Storage and editor
+
+Project folders are selected through Android's Storage Access Framework and
+persisted URI permissions; FxForge does not request broad shared-storage
+access. The Sora editor strictly decodes UTF-8, rejects invalid UTF-8 and
+NUL-containing content, and bounds file reads and writes to 2 MiB. Project
+sync is separate from editing and build operations.
+
+## Validation status
+
+GitHub Actions builds the ARM64 PRoot payload, runs JVM unit tests, assembles
+the Android debug APK, and publishes it as a workflow artifact. CI cannot
+validate execution under Android's SELinux policy, device-specific PRoot
+behavior, Shizuku privilege availability, or the embedded OpenCode/MCP
+end-to-end flow. Those still require installation and testing on a physical
+ARM64 Android device.
 ## Third-party components
 
 The project uses the unmodified Sora Editor Android library 0.24.6, licensed
