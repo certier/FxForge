@@ -79,8 +79,8 @@ pinned OCI layer and checked against its SHA-256 digest before extraction.
 The Linux rootfs and all downloaded SDK packages live in FxForge's private
 app storage; installation requires substantial free space and network access.
 
-The in-app SDK setup installs Java 17, Android SDK Platform 36, Build Tools
-36.0.0, and Gradle 8.13. Google's command-line SDK manager is used to install
+The in-app SDK setup installs Java 17, Git, OpenSSH, ripgrep, jq, rsync,
+Android SDK Platform 36, Build Tools 36.0.0, and Gradle 8.13. Google's command-line SDK manager is used to install
 the SDK packages after the user accepts the linked SDK terms. Android's
 host-side Linux build-tools executables are not assumed to work on ARM64:
 FxForge replaces the required AAPT2, AIDL, ZIPALIGN, and split-select binaries
