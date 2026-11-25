@@ -509,7 +509,7 @@ private fun OpenCodeScreen(
     var mcpError by remember { mutableStateOf<String?>(null) }
     var webView by remember { mutableStateOf<WebView?>(null) }
 
-    DisposableEffect(Unit) {
+    DisposableEffect(state.running) {
         onDispose {
             webView?.stopLoading()
             webView?.destroy()
