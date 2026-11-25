@@ -74,7 +74,8 @@ class MainActivity : ComponentActivity() {
                 ) {
                     FxForgeApp(
                         fxForgeApplication.shizukuStatusRepository,
-                        fxForgeApplication.shizukuUserServiceController
+                        fxForgeApplication.shizukuUserServiceController,
+                        fxForgeApplication.linuxRuntimeManager
                     )
                 }
             }
@@ -107,7 +108,8 @@ private data class ProjectEntry(
 @Composable
 private fun FxForgeApp(
     repository: ShizukuStatusRepository,
-    userServiceController: ShizukuUserServiceController
+    userServiceController: ShizukuUserServiceController,
+    linuxRuntimeManager: LinuxRuntimeManager
 ) {
     var destination by remember { mutableStateOf(Destination.HOME) }
     var openFile by remember { mutableStateOf<ProjectFile?>(null) }
@@ -164,7 +166,7 @@ private fun FxForgeApp(
                     }
                 }
                 Destination.DEVICE -> DeviceScreen(repository, userServiceController, padding)
-                Destination.ENVIRONMENT -> EnvironmentScreen(padding)
+                Destination.ENVIRONMENT -> EnvironmentScreen(padding, linuxRuntimeManager)
                 Destination.TERMINAL -> TerminalScreen(userServiceController, padding)
             }
         }
@@ -796,7 +798,7 @@ private fun DeviceScreen(
 }
 
 @Composable
-private fun EnvironmentScreen(padding: PaddingValues) {
+private fun EnvironmentScreen(padding: PaddingValues, linuxRuntimeManager: LinuxRuntimeManager) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     var probingProot by remember { mutableStateOf(false) }
