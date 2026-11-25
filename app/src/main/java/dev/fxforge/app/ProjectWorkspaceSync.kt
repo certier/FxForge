@@ -14,6 +14,7 @@ data class WorkspaceCopyResult(
 
 object ProjectWorkspaceSync {
     private val ignoredDirectoryNames = setOf(".gradle", "build", ".idea", ".kotlin", "out")
+    private val ignoredFileNames = setOf("local.properties", ".DS_Store")
     private const val MAX_FILES = 10_000
     private const val MAX_TOTAL_BYTES = 2L * 1024L * 1024L * 1024L
     private const val MAX_FILE_BYTES = 512L * 1024L * 1024L
@@ -64,6 +65,107 @@ object ProjectWorkspaceSync {
         return destination
     }
 
+    fun copyToSaf(
+        context: Context,
+        source: File,
+        destination: DocumentFile
+    ): WorkspaceCopyResult {
+        if (!source.isDirectory || !destination.isDirectory || !destination.canWrite()) {
+            throw IOException("The active workspace or SAF destination is unavailable.")
+        }
+        val counter = CopyCounter()
+        mirrorDirectory(context, source, destination, counter, 0)
+        return WorkspaceCopyResult(source, counter.files, counter.bytes)
+    }
+
+    private fun mirrorDirectory(
+        context: Context,
+        source: File,
+        destination: DocumentFile,
+        counter: CopyCounter,
+        depth: Int
+    ) {
+        if (depth > 32) throw IOException("Workspace folder nesting is too deep.")
+        val localChildren = source.listFiles()
+            ?: throw IOException("Could not read workspace directory: " + source.name)
+        val included = localChildren.filterNot { child ->
+            (child.isDirectory && child.name in ignoredDirectoryNames) ||
+                (child.isFile && child.name in ignoredFileNames)
+        }
+        val includedNames = included.map { it.name }.toSet()
+        destination.listFiles().forEach { existing ->
+            val name = existing.name ?: return@forEach
+            if (existing.isDirectory && name in ignoredDirectoryNames) return@forEach
+            if (existing.isFile && name in ignoredFileNames) return@forEach
+            if (name !in includedNames) {
+                deleteSafTree(existing)
+            }
+        }
+        included.forEach { child ->
+            val name = child.name
+            if (name.isBlank() || name == "." || name == ".." || name.contains('/') || name.contains('\\')) {
+                throw IOException("The workspace contains an invalid filename.")
+            }
+            val local = File(source, name)
+            if (local.canonicalFile.parentFile != source.canonicalFile) {
+                throw IOException("The workspace contains an unsafe path.")
+            }
+            val existing = destination.findFile(name)
+            if (local.isDirectory) {
+                val directory = if (existing?.isDirectory == true) {
+                    existing
+                } else {
+                    if (existing != null) deleteSafTree(existing)
+                    destination.createDirectory(name)
+                        ?: throw IOException("Could not create SAF directory: " + name)
+                }
+                mirrorDirectory(context, local, directory, counter, depth + 1)
+            } else if (local.isFile) {
+                if (local.length() > MAX_FILE_BYTES) {
+                    throw IOException("Workspace file exceeds the 512 MiB limit: " + name)
+                }
+                val target = if (existing?.isFile == true) {
+                    existing
+                } else {
+                    if (existing != null) deleteSafTree(existing)
+                    destination.createFile(
+                        java.net.URLConnection.guessContentTypeFromName(name) ?: "application/octet-stream",
+                        name
+                    ) ?: throw IOException("Could not create SAF file: " + name)
+                }
+                val output = context.contentResolver.openOutputStream(target.uri, "wt")
+                    ?: throw IOException("Could not open SAF file for writing: " + name)
+                local.inputStream().use { input ->
+                    output.use { outputStream ->
+                        val buffer = ByteArray(BUFFER_SIZE)
+                        while (true) {
+                            val count = input.read(buffer)
+                            if (count < 0) break
+                            counter.bytes += count
+                            if (counter.bytes > MAX_TOTAL_BYTES) {
+                                throw IOException("Workspace exceeds FxForge's 2 GiB sync limit.")
+                            }
+                            outputStream.write(buffer, 0, count)
+                        }
+                    }
+                }
+                counter.files++
+                if (counter.files > MAX_FILES) {
+                    throw IOException("Workspace contains more than 10,000 files.")
+                }
+            }
+        }
+    }
+
+    private fun deleteSafTree(document: DocumentFile) {
+        if (document.isDirectory) {
+            document.listFiles().forEach(::deleteSafTree)
+        }
+        if (!document.delete()) {
+            throw IOException("Could not remove an obsolete SAF item: " + (document.name ?: "unnamed"))
+        }
+    }
+
     private fun copyDirectory(
         context: Context,
         source: DocumentFile,
@@ -83,6 +185,7 @@ object ProjectWorkspaceSync {
                 throw IOException("The project contains an invalid filename.")
             }
             if (entry.isDirectory && name in ignoredDirectoryNames) return@forEach
+            if (entry.isFile && name in ignoredFileNames) return@forEach
             val target = File(destination, name)
             if (target.canonicalFile.parentFile != destination.canonicalFile) {
                 throw IOException("The project contains an unsafe path.")
