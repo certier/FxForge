@@ -618,6 +618,7 @@ private fun HomeScreen(
         }
         item {
             DashboardStatusCard(
+                icon = "▦",
                 title = "Project workspace",
                 detail = workspaceState.name ?: "No folder selected · choose a project folder to get started",
                 status = if (workspaceState.selected) "CONNECTED" else "NOT SET",
@@ -626,6 +627,7 @@ private fun HomeScreen(
         }
         item {
             DashboardStatusCard(
+                icon = ">_",
                 title = "Linux terminal",
                 detail = when {
                     terminalState.running -> "Persistent Debian shell is running"
@@ -638,6 +640,7 @@ private fun HomeScreen(
         }
         item {
             DashboardStatusCard(
+                icon = "◉",
                 title = "Android device bridge",
                 detail = when {
                     !status.binderAvailable -> "Shizuku is not connected"
@@ -650,6 +653,7 @@ private fun HomeScreen(
         }
         item {
             DashboardStatusCard(
+                icon = "✳",
                 title = "Android tools for OpenCode",
                 detail = when {
                     !mcpState.running -> "Start OpenCode with the Android bridge"
@@ -721,6 +725,7 @@ private fun SetupStepRow(
 
 @Composable
 private fun DashboardStatusCard(
+    icon: String,
     title: String,
     detail: String,
     status: String,
@@ -735,6 +740,15 @@ private fun DashboardStatusCard(
             verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(12.dp)
         ) {
+            Surface(shape = MaterialTheme.shapes.medium, color = MaterialTheme.colorScheme.secondaryContainer) {
+                Text(
+                    icon,
+                    modifier = Modifier.padding(horizontal = 13.dp, vertical = 11.dp),
+                    color = MaterialTheme.colorScheme.onSecondaryContainer,
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold
+                )
+            }
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 Text(title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
                 Text(detail, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
