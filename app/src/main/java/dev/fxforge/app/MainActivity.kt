@@ -10,6 +10,7 @@ import android.webkit.WebResourceRequest
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
@@ -27,6 +28,7 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.selection.SelectionContainer
@@ -134,6 +136,9 @@ private fun FxForgeApp(
     var openFile by remember { mutableStateOf<ProjectFile?>(null) }
     val context = LocalContext.current
     val coroutineScope = rememberCoroutineScope()
+    BackHandler(enabled = destination == Destination.ENVIRONMENT || destination == Destination.OPENCODE) {
+        destination = Destination.MORE
+    }
     var apkToInstall by remember { mutableStateOf<ProjectFile?>(null) }
     var installResult by remember { mutableStateOf<ShizukuApkInstallResult?>(null) }
     var installError by remember { mutableStateOf<String?>(null) }
@@ -163,7 +168,7 @@ private fun FxForgeApp(
                 Box(Modifier.fillMaxSize()) {
         Scaffold(
             topBar = {
-                Surface(color = MaterialTheme.colorScheme.surface, tonalElevation = 2.dp) {
+                if (openFile == null) Surface(color = MaterialTheme.colorScheme.surface, tonalElevation = 2.dp) {
                     Row(
                         modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 12.dp),
                         verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
@@ -1190,7 +1195,10 @@ private fun ProjectsScreen(
                     label = { Text("Search this folder") },
                     placeholder = { Text("File or folder name") }
                 )
-                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                Row(
+                    modifier = Modifier.horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
                     listOf("All", "Folders", "Files", "APKs").forEach { filter ->
                         FilterChip(
                             selected = selectedFilter == filter,
