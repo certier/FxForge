@@ -242,7 +242,7 @@ private fun FxForgeApp(
                                 projectToBuild = it
                                 buildResult = null
                             },
-                            canUseInOpenCode = linuxRuntimeManager.state.value.installed,
+                            linuxRuntimeManager = linuxRuntimeManager,
                             onUseInOpenCode = { folder ->
                                 coroutineScope.launch {
                                     linuxRuntimeManager.syncWorkspaceFromSaf(folder)
@@ -1291,10 +1291,12 @@ private fun ProjectsScreen(
     onOpenFile: (ProjectFile) -> Unit,
     onInstallApk: (ProjectFile) -> Unit,
     onBuildProject: (DocumentFile) -> Unit,
-    canUseInOpenCode: Boolean,
+    linuxRuntimeManager: LinuxRuntimeManager,
     onUseInOpenCode: (DocumentFile) -> Unit
 ) {
     val context = LocalContext.current
+    val linuxState by linuxRuntimeManager.state.collectAsState()
+    val workspaceState by linuxRuntimeManager.workspaceState.collectAsState()
     val scope = rememberCoroutineScope()
     var showCreateProject by remember { mutableStateOf(false) }
     var projectName by remember { mutableStateOf("MyAndroidApp") }
@@ -1432,10 +1434,19 @@ private fun ProjectsScreen(
                 }
                 FilledTonalButton(
                     onClick = { currentDirectory?.let(onUseInOpenCode) },
-                    enabled = canUseInOpenCode && currentDirectory != null && !loading,
+                    enabled = linuxState.installed && currentDirectory != null && !loading && !workspaceState.syncing,
                     modifier = Modifier.fillMaxWidth()
                 ) {
-                    Text(if (canUseInOpenCode) "Use this folder in OpenCode  →" else "Install Debian to use OpenCode")
+                    Text(
+                        when {
+                            workspaceState.syncing -> "Syncing workspace…"
+                            linuxState.installed -> "Use this folder in OpenCode  →"
+                            else -> "Install Debian to use OpenCode"
+                        }
+                    )
+                }
+                workspaceState.error?.let { message ->
+                    Text(message, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
                 }
             }
         }
