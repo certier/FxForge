@@ -1044,17 +1044,27 @@ private fun TerminalScreen(
 ) {
     var linuxMode by remember { mutableStateOf(false) }
     Column(Modifier.fillMaxSize().padding(padding)) {
-        Row(
+        Column(
             modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp),
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
+            verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            FilterChip(selected = !linuxMode, onClick = { linuxMode = false }, label = { Text("Android shell") })
-            FilterChip(selected = linuxMode, onClick = { linuxMode = true }, label = { Text("Debian Linux") })
+            Text("Terminal", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+            Text(
+                "Choose where commands run. Each shell keeps its own permissions and environment.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                FilterChip(selected = !linuxMode, onClick = { linuxMode = false }, label = { Text("Android shell") })
+                FilterChip(selected = linuxMode, onClick = { linuxMode = true }, label = { Text("Debian Linux") })
+            }
         }
-        if (linuxMode) {
-            LinuxTerminalPanel(runtimeManager, Modifier.weight(1f))
-        } else {
-            AndroidTerminalPanel(controller, Modifier.weight(1f))
+        AnimatedContent(targetState = linuxMode, label = "terminal-mode") { useLinux ->
+            if (useLinux) {
+                LinuxTerminalPanel(runtimeManager, Modifier.fillMaxSize())
+            } else {
+                AndroidTerminalPanel(controller, Modifier.fillMaxSize())
+            }
         }
     }
 }
