@@ -16,6 +16,15 @@ import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.content.edit
 import androidx.core.net.toUri
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.animateContentSize
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -45,6 +54,8 @@ import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.NavigationRail
 import androidx.compose.material3.NavigationRailItem
+import androidx.compose.material3.LinearProgressIndicator
+import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
@@ -451,82 +462,285 @@ private fun HomeScreen(
     val mcpState by androidMcpBridge.state.collectAsState()
     val terminalState by linuxRuntimeManager.terminalState.collectAsState()
     val workspaceState by linuxRuntimeManager.workspaceState.collectAsState()
-    val readyCount = listOf(linuxState.installed, sdkState.installed, status.permissionGranted, openCodeState.installed).count { it }
+
+    val setupSteps = listOf(linuxState.installed, sdkState.installed, openCodeState.installed)
+    val readyCount = setupSteps.count { it }
+    val progress by animateFloatAsState(
+        targetValue = readyCount / 3f,
+        animationSpec = tween(durationMillis = 650),
+        label = "setup-progress"
+    )
+    val nextStep = when {
+        !linuxState.installed -> "Install Debian Linux"
+        !sdkState.installed -> "Install Android SDK"
+        !openCodeState.installed -> "Set up OpenCode"
+        else -> "Create your first project"
+    }
+    val nextDestination = when {
+        !linuxState.installed || !sdkState.installed -> Destination.ENVIRONMENT
+        !openCodeState.installed -> Destination.OPENCODE
+        else -> Destination.PROJECTS
+    }
 
     LazyColumn(
         modifier = Modifier.fillMaxSize().padding(padding),
         contentPadding = PaddingValues(horizontal = 18.dp, vertical = 18.dp),
-        verticalArrangement = Arrangement.spacedBy(14.dp)
+        verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
         item {
             Card(
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier.fillMaxWidth().animateContentSize(),
                 colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer)
             ) {
-                Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    Text("Your mobile dev studio", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onPrimaryContainer)
+                Column(
+                    Modifier.fillMaxWidth().padding(20.dp),
+                    verticalArrangement = Arrangement.spacedBy(14.dp)
+                ) {
+                    Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+                        Surface(
+                            shape = CircleShape,
+                            color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.10f)
+                        ) {
+                            Text(
+                                "F", modifier = Modifier.padding(horizontal = 15.dp, vertical = 9.dp),
+                                color = MaterialTheme.colorScheme.onPrimaryContainer,
+                                style = MaterialTheme.typography.headlineSmall,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                        Column(Modifier.padding(start = 12.dp)) {
+                            Text(
+                                "Your mobile dev studio",
+                                style = MaterialTheme.typography.headlineSmall,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.onPrimaryContainer
+                            )
+                            Text(
+                                "Build something great, wherever you are.",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.82f)
+                            )
+                        }
+                    }
                     Text(
-                        "Code, build Android apps, run Linux tools and connect AI workflows from one workspace.",
-                        style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onPrimaryContainer
+                        "One workspace for Android projects, Linux tools, terminal workflows and AI-assisted coding.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onPrimaryContainer
                     )
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Button(onClick = { onNavigate(Destination.PROJECTS) }) { Text("Open projects") }
-                        OutlinedButton(onClick = { onNavigate(Destination.TERMINAL) }) { Text("Terminal") }
+                        Button(onClick = { onNavigate(nextDestination) }) {
+                            AnimatedContent(targetState = nextStep, label = "next-setup-action") { label ->
+                                Text(label)
+                            }
+                        }
+                        FilledTonalButton(onClick = { onNavigate(Destination.PROJECTS) }) {
+                            Text("Projects")
+                        }
                     }
                 }
             }
         }
         item {
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
-                Text("Workspace health", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
-                Surface(shape = CircleShape, color = MaterialTheme.colorScheme.secondaryContainer) {
-                    Text("$readyCount / 4 ready", modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSecondaryContainer)
+            Card(
+                modifier = Modifier.fillMaxWidth().animateContentSize(),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow)
+            ) {
+                Column(
+                    Modifier.fillMaxWidth().padding(18.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    Row(
+                        Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = androidx.compose.ui.Alignment.CenterVertically
+                    ) {
+                        Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                            Text("First-time setup", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                            Text(
+                                if (readyCount == 3) "Your core workstation is ready"
+                                else "A few steps before you can build and code",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        Surface(shape = CircleShape, color = MaterialTheme.colorScheme.secondaryContainer) {
+                            AnimatedContent(targetState = readyCount, label = "setup-count") { count ->
+                                Text(
+                                    "$count / 3",
+                                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 7.dp),
+                                    style = MaterialTheme.typography.labelLarge,
+                                    color = MaterialTheme.colorScheme.onSecondaryContainer
+                                )
+                            }
+                        }
+                    }
+                    LinearProgressIndicator(
+                        progress = { progress },
+                        modifier = Modifier.fillMaxWidth(),
+                        trackColor = MaterialTheme.colorScheme.surfaceContainerHighest
+                    )
+                    SetupStepRow(
+                        number = "1",
+                        title = "Debian Linux",
+                        detail = if (linuxState.installed) "Debian Bookworm is installed" else if (linuxState.installing) linuxState.phase else "Linux powers the Android build environment",
+                        complete = linuxState.installed,
+                        active = !linuxState.installed
+                    )
+                    SetupStepRow(
+                        number = "2",
+                        title = "Android SDK & build tools",
+                        detail = if (sdkState.installed) "Java 17 · API 36 · ARM64 tools ready" else if (sdkState.installing) sdkState.phase else "Install the SDK after Debian",
+                        complete = sdkState.installed,
+                        active = linuxState.installed && !sdkState.installed
+                    )
+                    SetupStepRow(
+                        number = "3",
+                        title = "OpenCode",
+                        detail = if (openCodeState.running) "Installed and running" else if (openCodeState.installed) "Installed · ready to launch" else if (openCodeState.installing) "Installing OpenCode…" else "Your AI coding workspace",
+                        complete = openCodeState.installed,
+                        active = sdkState.installed && !openCodeState.installed
+                    )
+                    AnimatedVisibility(visible = readyCount == 3, enter = fadeIn() + slideInVertically(), exit = fadeOut()) {
+                        Text(
+                            "Setup complete. Create a project or open your workspace to start building.",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.primary,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                    }
                 }
             }
         }
         item {
-            InfoCard("Device bridge", when {
-                !status.binderAvailable -> "Not connected · Connect Shizuku to enable device tools"
-                status.permissionGranted -> "Connected · " + status.privilege.label + " access granted"
-                else -> "Shizuku is available · FxForge permission is still needed"
-            })
+            Text("Your workspace", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
         }
         item {
-            InfoCard("Debian Linux", when {
-                linuxState.installing -> linuxState.phase
-                linuxState.installed -> "Ready · Debian Bookworm ARM64"
-                else -> "Not installed · Set up the Linux environment"
-            })
+            DashboardStatusCard(
+                title = "Project workspace",
+                detail = workspaceState.name ?: "No folder selected · choose a project folder to get started",
+                status = if (workspaceState.selected) "CONNECTED" else "NOT SET",
+                onClick = { onNavigate(Destination.PROJECTS) }
+            )
         }
         item {
-            InfoCard("Android build toolchain", when {
-                sdkState.installing -> sdkState.phase
-                sdkState.installed -> "Ready · Java 17, Android API 36, ARM64 Build Tools and Gradle 8.13"
-                else -> "Not installed · Required for building Android projects"
-            })
+            DashboardStatusCard(
+                title = "Linux terminal",
+                detail = when {
+                    terminalState.running -> "Persistent Debian shell is running"
+                    linuxState.installed -> "Ready when you need it"
+                    else -> "Install Debian to unlock the Linux shell"
+                },
+                status = if (terminalState.running) "RUNNING" else if (linuxState.installed) "READY" else "LOCKED",
+                onClick = { onNavigate(Destination.TERMINAL) }
+            )
         }
         item {
-            InfoCard("OpenCode", when {
-                openCodeState.running -> "Running · Embedded AI workspace is ready"
-                openCodeState.starting -> "Starting local server…"
-                openCodeState.installing -> "Installing OpenCode…"
-                openCodeState.installed -> "Installed · Ready to launch"
-                else -> "Not installed · Optional AI coding workspace"
-            })
+            DashboardStatusCard(
+                title = "Android device bridge",
+                detail = when {
+                    !status.binderAvailable -> "Shizuku is not connected"
+                    status.permissionGranted -> "Connected · ${status.privilege.label} access granted"
+                    else -> "Shizuku is available · FxForge permission is needed"
+                },
+                status = if (status.permissionGranted) "CONNECTED" else "OPTIONAL",
+                onClick = { onNavigate(Destination.DEVICE) }
+            )
         }
         item {
-            InfoCard("Android MCP tools", when {
-                !mcpState.running -> "Disconnected · Start OpenCode with Android tools"
-                mcpState.allowDeviceControl -> "Connected · Device-changing tools are enabled"
-                else -> "Connected · Read-only device tools"
-            })
+            DashboardStatusCard(
+                title = "Android tools for OpenCode",
+                detail = when {
+                    !mcpState.running -> "Start OpenCode with the Android bridge"
+                    mcpState.allowDeviceControl -> "Connected · device actions are enabled"
+                    else -> "Connected · read-only mode"
+                },
+                status = if (!mcpState.running) "OFFLINE" else if (mcpState.allowDeviceControl) "CONTROL ON" else "READ ONLY",
+                onClick = { onNavigate(Destination.OPENCODE) }
+            )
         }
         item {
-            InfoCard("Linux terminal", if (terminalState.running) "Session active · Persistent Debian shell" else if (linuxState.installed) "Stopped · Ready to start" else "Unavailable · Install Debian first")
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                FilledTonalButton(
+                    modifier = Modifier.weight(1f),
+                    onClick = { onNavigate(Destination.TERMINAL) }
+                ) { Text("Open terminal") }
+                FilledTonalButton(
+                    modifier = Modifier.weight(1f),
+                    onClick = { onNavigate(Destination.OPENCODE) }
+                ) { Text("Open OpenCode") }
+            }
         }
-        item { InfoCard("Active project", workspaceState.name ?: "No project folder selected yet") }
         item {
-            Text("Tip: choose a project folder once, then use the same workspace in Projects and OpenCode.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text(
+                "Device control is optional. You can build Android projects without enabling privileged device actions.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+    }
+}
+
+@Composable
+private fun SetupStepRow(
+    number: String,
+    title: String,
+    detail: String,
+    complete: Boolean,
+    active: Boolean
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth().animateContentSize(),
+        verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        Surface(
+            shape = CircleShape,
+            color = if (complete) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceContainerHighest
+        ) {
+            Text(
+                if (complete) "✓" else number,
+                modifier = Modifier.padding(horizontal = 11.dp, vertical = 7.dp),
+                color = if (complete) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant,
+                style = MaterialTheme.typography.labelLarge,
+                fontWeight = FontWeight.Bold
+            )
+        }
+        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Text(title, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+            Text(detail, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        if (active) {
+            Text("NEXT", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold)
+        } else if (complete) {
+            Text("READY", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold)
+        }
+    }
+}
+
+@Composable
+private fun DashboardStatusCard(
+    title: String,
+    detail: String,
+    status: String,
+    onClick: () -> Unit
+) {
+    Card(
+        modifier = Modifier.fillMaxWidth().clickable(onClick = onClick).animateContentSize(),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow)
+    ) {
+        Row(
+            Modifier.fillMaxWidth().padding(16.dp),
+            verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text(title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                Text(detail, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            Column(horizontalAlignment = androidx.compose.ui.Alignment.End, verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text(status, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold)
+                Text("›", style = MaterialTheme.typography.titleLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
         }
     }
 }
