@@ -252,7 +252,7 @@ private fun FxForgeApp(
                     }
                 }
                 Destination.DEVICE -> DeviceScreen(repository, userServiceController, padding)
-                Destination.ENVIRONMENT -> EnvironmentScreen(padding, linuxRuntimeManager)
+                Destination.ENVIRONMENT -> EnvironmentScreen(padding, linuxRuntimeManager) { destination = Destination.OPENCODE }
                 Destination.TERMINAL -> TerminalScreen(userServiceController, linuxRuntimeManager, padding)
                 Destination.OPENCODE -> OpenCodeScreen(linuxRuntimeManager, androidMcpBridge, padding)
                 }
@@ -1743,7 +1743,7 @@ private fun DeviceScreen(
 }
 
 @Composable
-private fun EnvironmentScreen(padding: PaddingValues, linuxRuntimeManager: LinuxRuntimeManager) {
+private fun EnvironmentScreen(padding: PaddingValues, linuxRuntimeManager: LinuxRuntimeManager, onOpenOpenCode: () -> Unit) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     var probingProot by remember { mutableStateOf(false) }
@@ -1812,11 +1812,52 @@ private fun EnvironmentScreen(padding: PaddingValues, linuxRuntimeManager: Linux
     LazyColumn(
         modifier = Modifier.fillMaxSize().padding(padding),
         contentPadding = PaddingValues(16.dp),
-        verticalArrangement = Arrangement.spacedBy(10.dp)
+        verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
         item {
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text("Environment & setup", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+                Text(
+                    "Install the tools in order. FxForge checks each component before enabling the next step.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        }
+        item {
+            Card(
+                modifier = Modifier.fillMaxWidth().animateContentSize(),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow)
+            ) {
+                Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    SetupStepRow(
+                        "1", "Debian Linux",
+                        if (linuxState.installed) "Installed and ready" else if (linuxState.installing) linuxState.phase else "Required for the Android toolchain",
+                        linuxState.installed, !linuxState.installed
+                    )
+                    SetupStepRow(
+                        "2", "Android SDK & build tools",
+                        if (sdkState.installed) "Java 17 · API 36 · ARM64 tools ready" else if (sdkState.installing) sdkState.phase else "Requires Debian Linux",
+                        sdkState.installed, linuxState.installed && !sdkState.installed
+                    )
+                    SetupStepRow(
+                        "3", "OpenCode",
+                        if (openCodeState.running) "Installed and running" else if (openCodeState.installed) "Installed · ready to launch" else if (openCodeState.installing) "Installing…" else "AI coding workspace",
+                        openCodeState.installed, sdkState.installed && !openCodeState.installed
+                    )
+                    FilledTonalButton(
+                        onClick = onOpenOpenCode,
+                        enabled = linuxState.installed && sdkState.installed,
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text(if (openCodeState.installed) "Open OpenCode setup" else "Install and configure OpenCode")
+                    }
+                }
+            }
+        }
+        item {
             Text("Device diagnostics", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
-            Text("Values below are queried from the current Android device; missing runtime components are explicitly marked.")
+            Text("Live information from Android and the installed development environment.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
         items(items) { (name, value) -> InfoCard(name, value) }
         item {
