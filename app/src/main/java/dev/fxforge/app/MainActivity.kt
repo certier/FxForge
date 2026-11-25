@@ -33,6 +33,7 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
@@ -81,7 +82,8 @@ class MainActivity : ComponentActivity() {
                     FxForgeApp(
                         fxForgeApplication.shizukuStatusRepository,
                         fxForgeApplication.shizukuUserServiceController,
-                        fxForgeApplication.linuxRuntimeManager
+                        fxForgeApplication.linuxRuntimeManager,
+                        fxForgeApplication.androidMcpBridge
                     )
                 }
             }
@@ -116,7 +118,8 @@ private data class ProjectEntry(
 private fun FxForgeApp(
     repository: ShizukuStatusRepository,
     userServiceController: ShizukuUserServiceController,
-    linuxRuntimeManager: LinuxRuntimeManager
+    linuxRuntimeManager: LinuxRuntimeManager,
+    androidMcpBridge: AndroidMcpBridge
 ) {
     var destination by remember { mutableStateOf(Destination.HOME) }
     var openFile by remember { mutableStateOf<ProjectFile?>(null) }
@@ -182,7 +185,7 @@ private fun FxForgeApp(
                 Destination.DEVICE -> DeviceScreen(repository, userServiceController, padding)
                 Destination.ENVIRONMENT -> EnvironmentScreen(padding, linuxRuntimeManager)
                 Destination.TERMINAL -> TerminalScreen(userServiceController, padding)
-                Destination.OPENCODE -> OpenCodeScreen(linuxRuntimeManager, padding)
+                Destination.OPENCODE -> OpenCodeScreen(linuxRuntimeManager, androidMcpBridge, padding)
             }
         }
 
@@ -414,11 +417,15 @@ private fun HomeScreen(repository: ShizukuStatusRepository, padding: PaddingValu
 @Composable
 private fun OpenCodeScreen(
     runtimeManager: LinuxRuntimeManager,
+    androidMcpBridge: AndroidMcpBridge,
     padding: PaddingValues
 ) {
     val state by runtimeManager.openCodeState.collectAsState()
     val linuxState by runtimeManager.state.collectAsState()
+    val mcpState by androidMcpBridge.state.collectAsState()
     val scope = rememberCoroutineScope()
+    var allowDeviceControl by remember { mutableStateOf(false) }
+    var mcpError by remember { mutableStateOf<String?>(null) }
     var webView by remember { mutableStateOf<WebView?>(null) }
 
     DisposableEffect(Unit) {
@@ -438,8 +445,18 @@ private fun OpenCodeScreen(
                 modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp),
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
-                Text("OpenCode · localhost:4096", fontWeight = FontWeight.SemiBold)
+                Column {
+                    Text("OpenCode · localhost:4096", fontWeight = FontWeight.SemiBold)
+                    Text(
+                        if (mcpState.running) {
+                            if (mcpState.allowDeviceControl) "Android tools · full device control enabled"
+                            else "Android tools · read-only mode"
+                        } else "Android tools disconnected",
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                }
                 TextButton(onClick = {
+                    androidMcpBridge.stop()
                     scope.launch { runtimeManager.stopOpenCode() }
                 }) {
                     Text("Stop")
@@ -503,6 +520,7 @@ private fun OpenCodeScreen(
                 }
             )
             state.error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+            mcpError?.let { Text(it, color = MaterialTheme.colorScheme.error) }
             if (!state.installed) {
                 Button(
                     enabled = !state.installing && linuxState.installed,
@@ -516,13 +534,37 @@ private fun OpenCodeScreen(
                     Text("Install Debian first from Environment.")
                 }
             } else {
+                Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+                    Checkbox(
+                        checked = allowDeviceControl,
+                        onCheckedChange = { allowDeviceControl = it }
+                    )
+                    Text("Allow shell commands, APK installation, and app launching through Shizuku")
+                }
+                Text("Connect the Shizuku device service from Device before using Android tools. Read-only device facts and logcat are available when control is off.")
                 Button(
-                    enabled = !state.starting,
+                    enabled = !state.starting && linuxState.installed,
                     onClick = {
-                        scope.launch { runtimeManager.startOpenCode() }
+                        scope.launch {
+                            mcpError = null
+                            try {
+                                val bridgeInfo = withContext(Dispatchers.IO) {
+                                    androidMcpBridge.start(allowDeviceControl)
+                                }
+                                runtimeManager.startOpenCode()
+                                if (runtimeManager.openCodeState.value.running) {
+                                    mcpError = runtimeManager.registerAndroidMcp(bridgeInfo)
+                                } else {
+                                    androidMcpBridge.stop()
+                                }
+                            } catch (exception: Exception) {
+                                androidMcpBridge.stop()
+                                mcpError = exception.message ?: "Could not start Android MCP tools."
+                            }
+                        }
                     }
                 ) {
-                    Text(if (state.starting) "Starting…" else "Start OpenCode")
+                    Text(if (state.starting) "Starting…" else "Start OpenCode with Android tools")
                 }
             }
             if (state.installing || state.starting) CircularProgressIndicator()
