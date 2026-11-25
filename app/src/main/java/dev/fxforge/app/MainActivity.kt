@@ -798,6 +798,9 @@ private fun DeviceScreen(
 @Composable
 private fun EnvironmentScreen(padding: PaddingValues) {
     val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    var probingProot by remember { mutableStateOf(false) }
+    var prootProbe by remember { mutableStateOf<ProotProbeResult?>(null) }
     val items = listOf(
         "Android release" to Build.VERSION.RELEASE,
         "API level" to Build.VERSION.SDK_INT.toString(),
@@ -806,6 +809,7 @@ private fun EnvironmentScreen(padding: PaddingValues) {
         "Available processors" to Runtime.getRuntime().availableProcessors().toString(),
         "App storage allocatable" to allocatableBytes(context),
         "App private storage" to context.filesDir.absolutePath,
+        "Bundled PRoot binary" to if (ProotBinaryRuntime.isBundled(context)) "ARM64 executable and loader extracted" else "Unavailable for this ABI",
         "Linux userland / PTY" to "Not installed",
         "OpenCode" to "Not installed",
         "Android SDK build tools" to "Not installed in this app"
@@ -820,6 +824,33 @@ private fun EnvironmentScreen(padding: PaddingValues) {
             Text("Values below are queried from the current Android device; missing runtime components are explicitly marked.")
         }
         items(items) { (name, value) -> InfoCard(name, value) }
+        item {
+            Button(
+                enabled = !probingProot && ProotBinaryRuntime.isBundled(context),
+                onClick = {
+                    probingProot = true
+                    scope.launch {
+                        prootProbe = withContext(Dispatchers.IO) {
+                            ProotBinaryRuntime.probe(context)
+                        }
+                        probingProot = false
+                    }
+                }
+            ) {
+                Text(if (probingProot) "Checking PRoot…" else "Verify PRoot executable")
+            }
+            if (probingProot) CircularProgressIndicator()
+            prootProbe?.let { result ->
+                InfoCard(
+                    "PRoot smoke test",
+                    if (result.available) result.output.ifBlank { "PRoot executed successfully." }
+                    else result.error ?: result.output
+                )
+                if (result.output.isNotBlank() && result.error != null) {
+                    Text(result.output, style = MaterialTheme.typography.bodySmall)
+                }
+            }
+        }
     }
 }
 
