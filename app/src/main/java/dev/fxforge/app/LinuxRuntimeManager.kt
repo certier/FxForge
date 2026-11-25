@@ -162,6 +162,18 @@ class LinuxRuntimeManager(context: Context) {
         return source
     }
 
+    /**
+     * PRoot emulates root but cannot reliably switch APT's HTTP helper to the
+     * unprivileged _apt UID. Keep the helper as guest root inside this sandbox.
+     * This does not change package signature verification.
+     */
+    private fun prepareAptProotCompatibility() {
+        val config = File(rootfsDirectory, "etc/apt/apt.conf.d/99fxforge-proot")
+        config.parentFile?.mkdirs()
+        val contents = "APT::Sandbox::User \"root\";\\n"
+        if (!config.isFile || config.readText() != contents) config.writeText(contents)
+    }
+
     suspend fun installDebian() = withContext(Dispatchers.IO) {
         if (!isProotAvailable()) {
             mutableState.value = mutableState.value.copy(
@@ -643,6 +655,7 @@ class LinuxRuntimeManager(context: Context) {
             val loader = File(appContext.applicationInfo.nativeLibraryDir, PROOT_LOADER)
             val loader32 = File(appContext.applicationInfo.nativeLibraryDir, PROOT_LOADER_32)
             val fipsEnabledFile = prepareFipsCompatibilityFile()
+            prepareAptProotCompatibility()
             try {
                 val process = ProcessBuilder(
                     binary.absolutePath,
@@ -915,6 +928,7 @@ class LinuxRuntimeManager(context: Context) {
             val loader = File(appContext.applicationInfo.nativeLibraryDir, PROOT_LOADER)
             val loader32 = File(appContext.applicationInfo.nativeLibraryDir, PROOT_LOADER_32)
             val fipsEnabledFile = prepareFipsCompatibilityFile()
+            prepareAptProotCompatibility()
             val prootArguments = mutableListOf(
                 binary.absolutePath,
                 "--link2symlink",
