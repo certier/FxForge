@@ -155,10 +155,10 @@ class LinuxRuntimeManager(context: Context) {
     private fun prepareFipsCompatibilityFile(): File {
         val source = File(runtimeDirectory, "proot-compat/fips_enabled")
         source.parentFile?.mkdirs()
-        if (!source.isFile || source.readText() != "0\\n") source.writeText("0\\n")
+        if (!source.isFile || source.readText() != "0\n") source.writeText("0\n")
         val target = File(rootfsDirectory, "proc/sys/crypto/fips_enabled")
         target.parentFile?.mkdirs()
-        if (!target.exists()) target.writeText("0\\n")
+        if (!target.exists()) target.writeText("0\n")
         return source
     }
 
