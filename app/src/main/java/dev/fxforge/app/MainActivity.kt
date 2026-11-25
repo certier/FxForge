@@ -1324,6 +1324,8 @@ private fun EnvironmentScreen(padding: PaddingValues, linuxRuntimeManager: Linux
     val sdkState by linuxRuntimeManager.androidSdkState.collectAsState()
     val openCodeState by linuxRuntimeManager.openCodeState.collectAsState()
     var showSdkLicense by remember { mutableStateOf(false) }
+    var verifyingSdk by remember { mutableStateOf(false) }
+    var sdkVerification by remember { mutableStateOf<LinuxCommandResult?>(null) }
     var linuxCommand by remember { mutableStateOf("uname -a && cat /etc/os-release") }
     var runningLinuxCommand by remember { mutableStateOf(false) }
     var linuxCommandResult by remember { mutableStateOf<LinuxCommandResult?>(null) }
@@ -1483,6 +1485,38 @@ private fun EnvironmentScreen(padding: PaddingValues, linuxRuntimeManager: Linux
                 }
                 if (!linuxState.installed) {
                     Text("Install Debian first.")
+                }
+            }
+            if (sdkState.installed) {
+                Button(
+                    enabled = !verifyingSdk,
+                    onClick = {
+                        verifyingSdk = true
+                        scope.launch {
+                            sdkVerification = linuxRuntimeManager.verifyAndroidToolchain()
+                            verifyingSdk = false
+                        }
+                    }
+                ) {
+                    Text(if (verifyingSdk) "Verifying…" else "Verify ARM64 build tools")
+                }
+                if (verifyingSdk) CircularProgressIndicator()
+                sdkVerification?.let { result ->
+                    InfoCard(
+                        "Toolchain verification",
+                        result.error ?: "Exit code: " + (result.exitCode?.toString() ?: "unknown")
+                    )
+                    if (result.output.isNotBlank()) {
+                        Card(Modifier.fillMaxWidth()) {
+                            SelectionContainer {
+                                Text(
+                                    result.output,
+                                    modifier = Modifier.fillMaxWidth().heightIn(max = 220.dp).verticalScroll(rememberScrollState()).padding(12.dp),
+                                    style = MaterialTheme.typography.bodySmall
+                                )
+                            }
+                        }
+                    }
                 }
             }
             sdkState.output?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
