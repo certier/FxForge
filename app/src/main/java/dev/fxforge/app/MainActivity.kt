@@ -246,7 +246,8 @@ private fun FxForgeApp(
                             onUseInOpenCode = { folder ->
                                 coroutineScope.launch {
                                     linuxRuntimeManager.syncWorkspaceFromSaf(folder)
-                                    if (linuxRuntimeManager.workspaceState.value.selected) {
+                                    val syncedWorkspace = linuxRuntimeManager.workspaceState.value
+                                    if (syncedWorkspace.selected && syncedWorkspace.error == null) {
                                         destination = Destination.OPENCODE
                                     }
                                 }
