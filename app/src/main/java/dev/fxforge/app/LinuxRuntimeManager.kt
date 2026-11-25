@@ -434,7 +434,7 @@ class LinuxRuntimeManager(context: Context) {
             ?: return@withContext "OpenCode server credentials are unavailable."
         val config = JSONObject()
             .put("type", "remote")
-            .put("url", "http://localhost:" + info.port + "/mcp")
+            .put("url", "http://127.0.0.1:" + info.port + "/mcp")
             .put("oauth", false)
             .put("disabled", false)
             .put("codemode", false)
