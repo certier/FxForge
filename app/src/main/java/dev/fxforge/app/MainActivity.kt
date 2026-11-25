@@ -327,6 +327,7 @@ private fun TerminalScreen(
     var running by remember { mutableStateOf(false) }
     var result by remember { mutableStateOf<ShizukuCommandResult?>(null) }
     var history by remember { mutableStateOf<List<Pair<String, ShizukuCommandResult>>>(emptyList()) }
+    val reportedUid = serviceStatus.deviceFacts?.uid?.toString() ?: "not queried"
 
     Column(
         modifier = Modifier.fillMaxSize().padding(padding).padding(16.dp),
@@ -339,7 +340,7 @@ private fun TerminalScreen(
         InfoCard(
             "Device service",
             when {
-                serviceStatus.connected -> "Connected · UID \${serviceStatus.deviceFacts?.uid?.toString() ?: "not queried"}"
+                serviceStatus.connected -> "Connected · UID $reportedUid"
                 serviceStatus.connecting -> "Connecting…"
                 else -> "Not connected. Open Device and connect the Shizuku device service."
             }
@@ -393,10 +394,8 @@ private fun TerminalScreen(
             Card(Modifier.fillMaxWidth()) {
                 Column(Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     Text("$ $input", fontWeight = FontWeight.SemiBold)
-                    Text(
-                        response.error ?: "exit \${response.exitCode ?: "unknown"}",
-                        style = MaterialTheme.typography.bodySmall
-                    )
+                    val exitLabel = response.error ?: "exit " + (response.exitCode?.toString() ?: "unknown")
+                    Text(exitLabel, style = MaterialTheme.typography.bodySmall)
                     TextButton(onClick = { command = input }) { Text("Run again") }
                 }
             }
