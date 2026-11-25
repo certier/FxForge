@@ -405,7 +405,7 @@ class LinuxRuntimeManager(context: Context) {
             ?: return@withContext "OpenCode server credentials are unavailable."
         val config = JSONObject()
             .put("type", "remote")
-            .put("url", "http://127.0.0.1:" + info.port + "/mcp")
+            .put("url", "http://localhost:" + info.port + "/mcp")
             .put("oauth", false)
             .put("codemode", false)
             .put("headers", JSONObject().put("Authorization", "Bearer " + info.token))
@@ -413,7 +413,7 @@ class LinuxRuntimeManager(context: Context) {
             .put("name", "fxforge-android")
             .put("config", config)
         val connection = try {
-            URL("http://127.0.0.1:" + OPEN_CODE_PORT + "/mcp").openConnection() as HttpURLConnection
+            URL("http://localhost:" + OPEN_CODE_PORT + "/mcp").openConnection() as HttpURLConnection
         } catch (exception: IOException) {
             return@withContext "Could not reach OpenCode MCP registration endpoint: " + (exception.message ?: "connection error")
         }
@@ -467,7 +467,7 @@ class LinuxRuntimeManager(context: Context) {
 
     private fun isOpenCodeServerReady(password: String): Boolean {
         val connection = try {
-            URL("http://127.0.0.1:" + OPEN_CODE_PORT + "/global/health").openConnection() as HttpURLConnection
+            URL("http://localhost:" + OPEN_CODE_PORT + "/global/health").openConnection() as HttpURLConnection
         } catch (_: IOException) {
             return false
         }
