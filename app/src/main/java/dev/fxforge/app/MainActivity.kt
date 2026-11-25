@@ -11,6 +11,7 @@ import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.content.edit
 import androidx.core.net.toUri
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -29,8 +30,10 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -39,10 +42,13 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.documentfile.provider.DocumentFile
 import dev.fxforge.shizuku.ShizukuPrivilege
 import dev.fxforge.shizuku.ShizukuStatusRepository
 import dev.fxforge.shizuku.ShizukuUserServiceController
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import java.io.IOException
 
 class MainActivity : ComponentActivity() {
@@ -72,12 +78,24 @@ private enum class Destination(val title: String, val marker: String) {
     ENVIRONMENT("Environment", "E")
 }
 
+private data class ProjectEntry(
+    val document: DocumentFile,
+    val uri: String,
+    val name: String,
+    val isDirectory: Boolean,
+    val canRead: Boolean,
+    val canWrite: Boolean,
+    val contentType: String?,
+    val sizeBytes: Long
+)
+
 @Composable
 private fun FxForgeApp(
     repository: ShizukuStatusRepository,
     userServiceController: ShizukuUserServiceController
 ) {
     var destination by remember { mutableStateOf(Destination.HOME) }
+    var openFile by remember { mutableStateOf<ProjectFile?>(null) }
     Scaffold(
         topBar = {
             Column(Modifier.padding(start = 20.dp, end = 20.dp, top = 18.dp, bottom = 8.dp)) {
@@ -86,21 +104,34 @@ private fun FxForgeApp(
             }
         },
         bottomBar = {
-            NavigationBar {
-                Destination.entries.forEach { item ->
-                    NavigationBarItem(
-                        selected = destination == item,
-                        onClick = { destination = item },
-                        icon = { Text(item.marker, fontWeight = FontWeight.Bold) },
-                        label = { Text(item.title) }
-                    )
+            if (openFile == null) {
+                NavigationBar {
+                    Destination.entries.forEach { item ->
+                        NavigationBarItem(
+                            selected = destination == item,
+                            onClick = { destination = item },
+                            icon = { Text(item.marker, fontWeight = FontWeight.Bold) },
+                            label = { Text(item.title) }
+                        )
+                    }
                 }
             }
         }
     ) { padding ->
         when (destination) {
             Destination.HOME -> HomeScreen(repository, padding)
-            Destination.PROJECTS -> ProjectsScreen(padding)
+            Destination.PROJECTS -> {
+                val file = openFile
+                if (file == null) {
+                    ProjectsScreen(padding, onOpenFile = { openFile = it })
+                } else {
+                    ProjectEditorScreen(
+                        file = file,
+                        padding = padding,
+                        onClose = { openFile = null }
+                    )
+                }
+            }
             Destination.DEVICE -> DeviceScreen(repository, userServiceController, padding)
             Destination.ENVIRONMENT -> EnvironmentScreen(padding)
         }
@@ -118,7 +149,7 @@ private fun HomeScreen(repository: ShizukuStatusRepository, padding: PaddingValu
         item {
             InfoCard(
                 title = "Foundation build",
-                detail = "Native Android UI, persistent project-folder access, and live Shizuku status."
+                detail = "Native Android UI, a SAF project browser and text editor, and live Shizuku status."
             )
         }
         item {
@@ -139,7 +170,7 @@ private fun HomeScreen(repository: ShizukuStatusRepository, padding: PaddingValu
                 "Linux userland and interactive PTY terminal",
                 "OpenCode runtime and agent sessions",
                 "Android SDK, ARM64 build tools, and APK builds",
-                "Code editor, Git operations, and Android MCP tools"
+                "Git operations and Android MCP tools"
             )
         ) { feature ->
             Text("•  $feature", style = MaterialTheme.typography.bodyMedium)
@@ -148,13 +179,75 @@ private fun HomeScreen(repository: ShizukuStatusRepository, padding: PaddingValu
 }
 
 @Composable
-private fun ProjectsScreen(padding: PaddingValues) {
+private fun ProjectsScreen(padding: PaddingValues, onOpenFile: (ProjectFile) -> Unit) {
     val context = LocalContext.current
     val preferences = remember {
         context.getSharedPreferences("project_selection", Context.MODE_PRIVATE)
     }
     var selectedUri by remember { mutableStateOf(preferences.getString("tree_uri", null)) }
     var error by remember { mutableStateOf<String?>(null) }
+    var entries by remember { mutableStateOf<List<ProjectEntry>>(emptyList()) }
+    var loading by remember { mutableStateOf(false) }
+    var currentDirectoryName by remember { mutableStateOf<String?>(null) }
+    val directoryStack = remember { mutableStateListOf<DocumentFile>() }
+
+    LaunchedEffect(selectedUri) {
+        directoryStack.clear()
+        val uri = selectedUri?.toUri()
+        if (uri != null) {
+            val root = DocumentFile.fromTreeUri(context, uri)
+            if (root == null || !root.canRead()) {
+                error = "The saved folder is unavailable. Re-select it to restore access."
+            } else {
+                directoryStack.add(root)
+                error = null
+            }
+        } else {
+            entries = emptyList()
+        }
+    }
+
+    val currentDirectory = directoryStack.lastOrNull()
+    LaunchedEffect(currentDirectory) {
+        if (currentDirectory == null) {
+            entries = emptyList()
+            currentDirectoryName = null
+            return@LaunchedEffect
+        }
+        loading = true
+        error = null
+        try {
+            val listing = withContext(Dispatchers.IO) {
+                if (!currentDirectory.canRead()) {
+                    throw SecurityException("Folder read access is no longer granted")
+                }
+                val items = currentDirectory.listFiles().map { document ->
+                    ProjectEntry(
+                        document = document,
+                        uri = document.uri.toString(),
+                        name = document.name ?: "Unnamed item",
+                        isDirectory = document.isDirectory,
+                        canRead = document.canRead(),
+                        canWrite = document.canWrite(),
+                        contentType = document.type,
+                        sizeBytes = if (document.isDirectory) 0L else document.length()
+                    )
+                }.sortedWith(
+                    compareBy<ProjectEntry>({ !it.isDirectory }, { it.name.lowercase() })
+                )
+                currentDirectory.name to items
+            }
+            currentDirectoryName = listing.first
+            entries = listing.second
+        } catch (exception: SecurityException) {
+            entries = emptyList()
+            currentDirectoryName = null
+            error = "Cannot read this folder: ${exception.message ?: "access denied"}"
+        } finally {
+            loading = false
+        }
+    }
+
     val folderPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
         if (uri != null) {
             try {
@@ -170,25 +263,80 @@ private fun ProjectsScreen(padding: PaddingValues) {
             }
         }
     }
-    Column(
-        modifier = Modifier.fillMaxSize().padding(padding).padding(20.dp),
+    LazyColumn(
+        modifier = Modifier.fillMaxSize().padding(padding),
+        contentPadding = PaddingValues(20.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
-        Text("Project folder", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
-        Text("Choose a folder through Android's Storage Access Framework. Access is limited to the folder you select.")
-        if (selectedUri == null) {
-            Text("No project folder selected.")
-        } else {
-            InfoCard(title = "Selected folder", detail = selectedUri.orEmpty())
+        item {
+            Text("Project folder", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
+            Text("Browse a folder through Android's Storage Access Framework. Access is limited to the folder you selected.")
         }
-        Button(onClick = { folderPicker.launch(null) }) {
-            Text(if (selectedUri == null) "Choose project folder" else "Change project folder")
+        item {
+            if (selectedUri == null) {
+                Text("No project folder selected.")
+            } else {
+                InfoCard(
+                    title = "Selected folder",
+                    detail = currentDirectoryName ?: selectedUri.orEmpty()
+                )
+            }
+            Button(onClick = { folderPicker.launch(null) }) {
+                Text(if (selectedUri == null) "Choose project folder" else "Change project folder")
+            }
         }
-        error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
-        Text(
-            "The selected folder is persisted across app restarts. Linux synchronization and file editing are not implemented yet.",
-            style = MaterialTheme.typography.bodySmall
-        )
+        if (directoryStack.size > 1) {
+            item {
+                TextButton(onClick = { directoryStack.removeAt(directoryStack.lastIndex) }) {
+                    Text("Up one folder")
+                }
+            }
+        }
+        if (loading) item { Text("Loading folder…") }
+        error?.let { message -> item { Text(message, color = MaterialTheme.colorScheme.error) } }
+        if (!loading && error == null && currentDirectory != null && entries.isEmpty()) {
+            item { Text("This folder is empty.") }
+        }
+        items(entries, key = { it.uri }) { entry ->
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .then(
+                        if (entry.isDirectory) Modifier.clickable { directoryStack.add(entry.document) }
+                        else if (entry.canRead) Modifier.clickable {
+                            onOpenFile(ProjectFile(entry.uri, entry.name, entry.canWrite))
+                        }
+                        else Modifier
+                    )
+            ) {
+                Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                    Text(
+                        "${if (entry.isDirectory) "Folder" else "File"} · ${entry.name}",
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                    if (!entry.isDirectory) {
+                        Text(
+                            listOfNotNull(entry.contentType, entry.sizeBytes.takeIf { it > 0 }?.let(::formatBytes))
+                                .joinToString(" · ")
+                                .ifEmpty { "File details unavailable" },
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                        if (entry.canRead && !entry.canWrite) {
+                            Text("Read-only", style = MaterialTheme.typography.labelSmall)
+                        } else if (!entry.canRead) {
+                            Text("Cannot read this file", style = MaterialTheme.typography.labelSmall)
+                        }
+                    }
+                }
+            }
+        }
+        item {
+            Text(
+                "Text files up to 2 MiB can be edited. Linux synchronization and Git operations are not implemented yet.",
+                style = MaterialTheme.typography.bodySmall
+            )
+        }
     }
 }
 

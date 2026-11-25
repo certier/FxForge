@@ -5,12 +5,15 @@ affiliated with the OpenCode team.
 
 > **Current status:** this repository contains the Android application
 > foundation, persistent Storage Access Framework (SAF) project-folder
-> selection, live Shizuku binder/permission/privilege reporting, and device
-> diagnostics. Shizuku UserService can also return basic device facts and the
-> actual service-process UID after explicit permission. It does **not** yet
-> contain a Linux userland, OpenCode runtime, PTY terminal, in-app Android SDK
-> installer/build toolchain, editor, or Android MCP bridge. No screen reports
-> those capabilities as operational.
+> selection and browser, a native text editor for UTF-8 files up to 2 MiB, live
+> Shizuku binder/permission/privilege reporting, and device diagnostics.
+> Shizuku UserService can also return basic device facts and the actual
+> service-process UID after explicit permission. The editor uses Sora Editor
+> and currently applies Java syntax support to `.java` files; other files are
+> edited as plain text. The app does **not** yet contain a Linux userland,
+> OpenCode runtime, PTY terminal, in-app Android SDK installer/build toolchain,
+> Git integration, or Android MCP bridge. No screen reports those capabilities
+> as operational.
 
 ## Build the Android app
 
@@ -67,9 +70,17 @@ filesystem operations are not implemented.
 ## Security and data
 
 Project folders are selected using Android's Storage Access Framework and
-persisted URI permissions. FxForge does not request broad shared-storage
-access. Shizuku permission is user-granted through Shizuku; app status is
-reported as unavailable until its binder is reachable.
+persisted URI permissions. The editor strictly decodes UTF-8, rejects invalid
+UTF-8 and NUL-containing content, and bounds reads and writes to 2 MiB.
+FxForge does not request broad shared-storage access. Shizuku permission is
+user-granted through Shizuku; app status is reported as unavailable until its
+binder is reachable.
+
+## Third-party components
+
+The project uses the unmodified Sora Editor Android library 0.24.6, licensed
+under LGPL-2.1-or-later. See [THIRD_PARTY_NOTICES.md](./THIRD_PARTY_NOTICES.md)
+and the accompanying license text in `third_party/licenses/`.
 
 ## CI
 
