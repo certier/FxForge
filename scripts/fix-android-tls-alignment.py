@@ -23,8 +23,13 @@ def fix(path: Path) -> None:
         raise SystemExit(f"{path}: truncated ELF header")
     header = ELF_HEADER.unpack_from(data)
     ident, machine = header[0], header[2]
-    if ident[:4] != b"\x7fELF" or ident[4] != 2 or ident[5] != 1:
-        raise SystemExit(f"{path}: expected little-endian ELF64")
+    if ident[:4] != b"\x7fELF" or ident[5] != 1:
+        raise SystemExit(f"{path}: invalid or unsupported ELF file")
+    if ident[4] == 1:
+        print(f"{path}: 32-bit helper; skipped (Android TLS workaround targets AArch64 PRoot)")
+        return
+    if ident[4] != 2:
+        raise SystemExit(f"{path}: unsupported ELF class {ident[4]}")
     if machine != EM_AARCH64:
         raise SystemExit(f"{path}: expected AArch64 ELF (machine={machine})")
 
