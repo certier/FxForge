@@ -360,14 +360,36 @@ class LinuxRuntimeManager(context: Context) {
         }
         mutableOpenCodeState.value = OpenCodeState(installing = true)
         val installResult = runCommand(
-            "apt-get -qq update && DEBIAN_FRONTEND=noninteractive apt-get -qq install -y ca-certificates curl git && curl -fsSL https://opencode.ai/v2/install | bash && /root/.opencode/bin/opencode --version",
-            timeoutSeconds = 900
+            "set -eu; " +
+                "apt-get update; " +
+                "DEBIAN_FRONTEND=noninteractive apt-get install -y ca-certificates curl git bash; " +
+                "curl -fL --retry 3 --retry-delay 2 https://opencode.ai/v2/install -o /tmp/fxforge-opencode-install.sh; " +
+                "bash /tmp/fxforge-opencode-install.sh; " +
+                "test -x /root/.opencode/bin/opencode; " +
+                "/root/.opencode/bin/opencode --version; " +
+                "rm -f /tmp/fxforge-opencode-install.sh",
+            timeoutSeconds = 900,
+            maxOutputChars = MAX_BUILD_OUTPUT_CHARS
         )
-        val installed = openCodeBinary.isFile
+        val installed = openCodeBinary.isFile && openCodeBinary.canExecute()
+        val failureDetails = when {
+            installResult.error != null -> installResult.error
+            installResult.exitCode != 0 -> buildString {
+                append("OpenCode installer exited with code ")
+                append(installResult.exitCode ?: "unknown")
+                if (installResult.output.isNotBlank()) {
+                    append(":\\n")
+                    append(installResult.output.takeLast(3000))
+                }
+            }
+            !installed -> "Installer finished but /root/.opencode/bin/opencode is missing or not executable.\\n" +
+                installResult.output.takeLast(3000)
+            else -> null
+        }
         mutableOpenCodeState.value = OpenCodeState(
             installed = installed,
-            error = if (installed) null else installResult.error
-                ?: "OpenCode installation did not create /root/.opencode/bin/opencode.",
+            error = if (installed) null else failureDetails
+                ?: "OpenCode installation failed without reporting an error.",
             output = installResult.output
         )
     }
