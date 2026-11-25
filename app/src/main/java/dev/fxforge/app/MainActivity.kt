@@ -1367,6 +1367,7 @@ private fun EnvironmentScreen(padding: PaddingValues, linuxRuntimeManager: Linux
         "App private storage" to context.filesDir.absolutePath,
         "Bundled PRoot binary" to if (ProotBinaryRuntime.isBundled(context)) "ARM64 executable and loader extracted" else "Unavailable for this ABI",
         "Android SDK" to if (sdkState.installed) "API 36 · ARM64 Build Tools · Gradle 8.13" else "Not installed",
+        "Git and developer CLI" to if (sdkState.installed) "Git · SSH · ripgrep · jq · rsync" else "Installed with Android SDK toolchain",
         "Linux shell" to if (linuxState.installed) "Persistent Debian Bash session · no kernel PTY" else "Not installed",
         "OpenCode" to when {
             openCodeState.running -> "Running · localhost:4096"
