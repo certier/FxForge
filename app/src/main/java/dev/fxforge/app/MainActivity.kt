@@ -287,7 +287,7 @@ private fun HomeScreen(repository: ShizukuStatusRepository, padding: PaddingValu
         item {
             InfoCard(
                 title = "Foundation build",
-                detail = "Native Android UI, a SAF project browser and text editor, and live Shizuku status."
+                detail = "Native Android UI, a SAF project browser and text editor, Shizuku diagnostics, APK installation, and an Android shell console."
             )
         }
         item {
@@ -305,10 +305,10 @@ private fun HomeScreen(repository: ShizukuStatusRepository, padding: PaddingValu
         }
         items(
             listOf(
-                "Linux userland and interactive PTY terminal",
-                "OpenCode runtime and agent sessions",
-                "Android SDK, ARM64 build tools, and APK builds",
-                "Git operations and Android MCP tools"
+                "Persistent Debian/Ubuntu ARM64 Linux userland and PTY",
+                "OpenCode runtime, model configuration, and agent sessions",
+                "On-device Android SDK, ARM64-compatible build tools, and Gradle builds",
+                "Git workspace integration and authenticated Android MCP bridge"
             )
         ) { feature ->
             Text("•  $feature", style = MaterialTheme.typography.bodyMedium)
