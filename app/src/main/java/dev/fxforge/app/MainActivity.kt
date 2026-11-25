@@ -218,7 +218,8 @@ private fun FxForgeApp(
                 }
             }
         ) { padding ->
-            when (destination) {
+            AnimatedContent(targetState = destination, label = "screen-transition") { screen ->
+                when (screen) {
                 Destination.HOME -> HomeScreen(repository, linuxRuntimeManager, androidMcpBridge, padding) { destination = it }
                 Destination.MORE -> MoreScreen(
                     padding = padding,
@@ -254,6 +255,7 @@ private fun FxForgeApp(
                 Destination.ENVIRONMENT -> EnvironmentScreen(padding, linuxRuntimeManager)
                 Destination.TERMINAL -> TerminalScreen(userServiceController, linuxRuntimeManager, padding)
                 Destination.OPENCODE -> OpenCodeScreen(linuxRuntimeManager, androidMcpBridge, padding)
+                }
             }
         }
 
