@@ -11,15 +11,20 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import org.apache.commons.compress.archivers.tar.TarArchiveInputStream
 import org.apache.commons.compress.compressors.gzip.GzipCompressorInputStream
 import org.json.JSONObject
 import java.io.BufferedInputStream
+import java.io.BufferedReader
+import java.io.BufferedWriter
 import java.io.File
 import java.io.FileInputStream
 import java.io.FileOutputStream
 import java.io.IOException
 import java.io.InputStreamReader
+import java.io.OutputStreamWriter
 import java.net.HttpURLConnection
 import java.net.URL
 import java.nio.file.Files
@@ -79,6 +84,12 @@ data class WorkspaceState(
     val error: String? = null
 )
 
+data class LinuxTerminalState(
+    val running: Boolean = false,
+    val starting: Boolean = false,
+    val error: String? = null
+)
+
 private object DebianRootfs {
     const val ARCHIVE_SIZE = 28_144_305L
     const val SHA256 = "7f1aa0b5c351d0542b2066749ed47608e5873bcdd1fd14f4df6f0a05cac02f8e"
@@ -98,6 +109,13 @@ class LinuxRuntimeManager(context: Context) {
         )
     )
     val workspaceState: StateFlow<WorkspaceState> = mutableWorkspaceState.asStateFlow()
+    private val terminalMutex = Mutex()
+    private val mutableTerminalState = MutableStateFlow(LinuxTerminalState())
+    val terminalState: StateFlow<LinuxTerminalState> = mutableTerminalState.asStateFlow()
+    @Volatile private var terminalProcess: Process? = null
+    @Volatile private var terminalReader: BufferedReader? = null
+    @Volatile private var terminalWriter: BufferedWriter? = null
+    private var terminalCommandSequence = 0L
     private val rootfsDirectory = File(runtimeDirectory, DebianRootfs.VERSION)
     private val markerFile = File(rootfsDirectory, ".fxforge-rootfs-version")
     private val downloadFile = File(appContext.cacheDir, "debian-bookworm-arm64.tar.gz")
@@ -514,6 +532,163 @@ class LinuxRuntimeManager(context: Context) {
         }
     }
 
+    suspend fun startTerminalSession() = withContext(Dispatchers.IO) {
+        terminalMutex.withLock {
+            if (terminalProcess?.isAlive == true) {
+                mutableTerminalState.value = LinuxTerminalState(running = true)
+                return@withLock
+            }
+            if (!markerFile.isFile || !isProotAvailable()) {
+                mutableTerminalState.value = LinuxTerminalState(
+                    error = "Install the ARM64 PRoot runtime and Debian before opening the Linux shell."
+                )
+                return@withLock
+            }
+            mutableTerminalState.value = LinuxTerminalState(starting = true)
+            workspaceDirectory.mkdirs()
+            File(rootfsDirectory, "workspace").mkdirs()
+            val temporaryDirectory = File(appContext.cacheDir, "proot-tmp")
+            temporaryDirectory.mkdirs()
+            val binary = File(appContext.applicationInfo.nativeLibraryDir, PROOT_BINARY)
+            val loader = File(appContext.applicationInfo.nativeLibraryDir, PROOT_LOADER)
+            val loader32 = File(appContext.applicationInfo.nativeLibraryDir, PROOT_LOADER_32)
+            try {
+                val process = ProcessBuilder(
+                    binary.absolutePath,
+                    "--link2symlink",
+                    "-0",
+                    "-r", rootfsDirectory.absolutePath,
+                    "-b", "/dev",
+                    "-b", "/proc",
+                    "-b", "/sys",
+                    "-b", workspaceDirectory.absolutePath + ":/workspace",
+                    "-w", "/workspace",
+                    "/usr/bin/env",
+                    "HOME=/root",
+                    "PATH=/opt/gradle/gradle-8.13/bin:/opt/android-sdk/cmdline-tools/latest/bin:/opt/android-sdk/platform-tools:/opt/android-sdk/build-tools/36.0.0:/root/.opencode/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+                    "JAVA_HOME=/usr/lib/jvm/java-17-openjdk-arm64",
+                    "ANDROID_HOME=/opt/android-sdk",
+                    "ANDROID_SDK_ROOT=/opt/android-sdk",
+                    "GRADLE_USER_HOME=/root/.gradle",
+                    "TERM=xterm-256color",
+                    "/bin/bash",
+                    "--noprofile",
+                    "--norc"
+                ).directory(rootfsDirectory)
+                    .redirectErrorStream(true)
+                    .apply {
+                        environment()["PROOT_TMP_DIR"] = temporaryDirectory.absolutePath
+                        environment()["PROOT_LOADER"] = loader.absolutePath
+                        environment()["PROOT_LOADER_32"] = loader32.absolutePath
+                        environment()["PROOT_NO_SECCOMP"] = "1"
+                    }
+                    .start()
+                terminalProcess = process
+                terminalReader = BufferedReader(InputStreamReader(process.inputStream, Charsets.UTF_8))
+                terminalWriter = BufferedWriter(OutputStreamWriter(process.outputStream, Charsets.UTF_8))
+                mutableTerminalState.value = LinuxTerminalState(running = true)
+            } catch (exception: Exception) {
+                terminalProcess = null
+                terminalReader = null
+                terminalWriter = null
+                mutableTerminalState.value = LinuxTerminalState(
+                    error = "Could not start Debian shell: " + (exception.message ?: "process error")
+                )
+            }
+        }
+    }
+
+    suspend fun executeTerminalCommand(command: String, timeoutSeconds: Int = 120): LinuxCommandResult =
+        withContext(Dispatchers.IO) {
+            terminalMutex.withLock {
+                val process = terminalProcess
+                val reader = terminalReader
+                val writer = terminalWriter
+                if (process == null || !process.isAlive || reader == null || writer == null) {
+                    mutableTerminalState.value = LinuxTerminalState(error = "Start the Linux shell before running commands.")
+                    return@withLock LinuxCommandResult("", null, false, "Linux shell is not running.")
+                }
+                if (command.isBlank() || command.length > MAX_COMMAND_CHARS) {
+                    return@withLock LinuxCommandResult("", null, false, "Command must contain 1 to 8192 characters.")
+                }
+                terminalCommandSequence += 1
+                val marker = "__FXFORGE_TERMINAL_END_" + terminalCommandSequence + "__"
+                val outputTask = FutureTask {
+                    val output = StringBuilder()
+                    var truncated = false
+                    var exitCode: Int? = null
+                    while (true) {
+                        val line = reader.readLine() ?: throw IOException("Linux shell exited before returning a command result.")
+                        if (line.startsWith(marker + ":")) {
+                            exitCode = line.substringAfter(':').toIntOrNull()
+                            break
+                        }
+                        val remaining = MAX_TERMINAL_OUTPUT_CHARS - output.length
+                        if (remaining > 0) {
+                            if (line.length > remaining) {
+                                output.append(line.take(remaining))
+                                truncated = true
+                            } else {
+                                output.append(line).append('\n')
+                            }
+                        } else {
+                            truncated = true
+                        }
+                    }
+                    CommandOutput(output.toString(), truncated, exitCode)
+                }
+                Thread(outputTask, "fxforge-terminal-reader").apply {
+                    isDaemon = true
+                    start()
+                }
+                try {
+                    writer.write(command)
+                    writer.newLine()
+                    writer.write("printf '\\n" + marker + ":%s\\n' \"$?\"")
+                    writer.newLine()
+                    writer.flush()
+                    val timeout = timeoutSeconds.coerceIn(1, MAX_TERMINAL_TIMEOUT_SECONDS)
+                    val output = outputTask.get(timeout.toLong(), TimeUnit.SECONDS)
+                    LinuxCommandResult(output.text, output.exitCode, output.truncated)
+                } catch (exception: TimeoutException) {
+                    process.destroyForcibly()
+                    terminalProcess = null
+                    terminalReader = null
+                    terminalWriter = null
+                    mutableTerminalState.value = LinuxTerminalState(error = "Linux command timed out; the shell session was closed.")
+                    LinuxCommandResult("", null, false, "Command timed out after " + timeoutSeconds + " seconds.")
+                } catch (exception: ExecutionException) {
+                    process.destroyForcibly()
+                    terminalProcess = null
+                    terminalReader = null
+                    terminalWriter = null
+                    mutableTerminalState.value = LinuxTerminalState(error = exception.cause?.message ?: "Linux shell stopped.")
+                    LinuxCommandResult("", null, false, exception.cause?.message ?: "Linux shell stopped.")
+                } catch (exception: Exception) {
+                    process.destroyForcibly()
+                    terminalProcess = null
+                    terminalReader = null
+                    terminalWriter = null
+                    mutableTerminalState.value = LinuxTerminalState(error = exception.message ?: "Linux shell stopped.")
+                    LinuxCommandResult("", null, false, exception.message ?: "Linux shell stopped.")
+                }
+            }
+        }
+
+    suspend fun stopTerminalSession() = withContext(Dispatchers.IO) {
+        terminalMutex.withLock {
+            val process = terminalProcess
+            terminalProcess = null
+            terminalReader = null
+            terminalWriter = null
+            if (process != null && process.isAlive) {
+                process.destroy()
+                if (!process.waitFor(2, TimeUnit.SECONDS)) process.destroyForcibly()
+            }
+            mutableTerminalState.value = LinuxTerminalState()
+        }
+    }
+
     suspend fun syncWorkspaceFromSaf(source: androidx.documentfile.provider.DocumentFile) =
         withContext(Dispatchers.IO) {
             if (!source.isDirectory || !source.canRead()) {
@@ -902,4 +1077,8 @@ class LinuxRuntimeManager(context: Context) {
     }
 }
 
-private data class CommandOutput(val text: String, val truncated: Boolean)
+private data class CommandOutput(
+    val text: String,
+    val truncated: Boolean,
+    val exitCode: Int? = null
+)
