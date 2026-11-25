@@ -97,6 +97,7 @@ object ProjectWorkspaceSync {
             val name = existing.name ?: return@forEach
             if (existing.isDirectory && name in ignoredDirectoryNames) return@forEach
             if (existing.isFile && name in ignoredFileNames) return@forEach
+            if (existing.isFile && name.endsWith(".apk", ignoreCase = true)) return@forEach
             if (name !in includedNames) {
                 deleteSafTree(existing)
             }
