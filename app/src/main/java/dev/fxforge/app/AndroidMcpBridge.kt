@@ -271,31 +271,29 @@ class AndroidMcpBridge(
             JSONObject().put("type", "object")
                 .put("properties", JSONObject().put("lines", JSONObject().put("type", "integer").put("minimum", 1).put("maximum", 500)))
         ))
-        if (allowDeviceControl) {
-            tools.put(tool(
-                "android_shell",
-                "Run an explicitly user-enabled command through the Shizuku Android shell UID.",
-                JSONObject().put("type", "object")
-                    .put("properties", JSONObject()
-                        .put("command", JSONObject().put("type", "string"))
-                        .put("timeout_seconds", JSONObject().put("type", "integer").put("minimum", 1).put("maximum", 60)))
-                    .put("required", JSONArray().put("command"))
-            ))
-            tools.put(tool(
-                "android_install_apk",
-                "Install an APK produced in FxForge's private project workspace using Shizuku.",
-                JSONObject().put("type", "object")
-                    .put("properties", JSONObject().put("path", JSONObject().put("type", "string")))
-                    .put("required", JSONArray().put("path"))
-            ))
-            tools.put(tool(
-                "android_launch_app",
-                "Launch an installed Android app by package name through Shizuku.",
-                JSONObject().put("type", "object")
-                    .put("properties", JSONObject().put("package_name", JSONObject().put("type", "string")))
-                    .put("required", JSONArray().put("package_name"))
-            ))
-        }
+        tools.put(tool(
+            "android_shell",
+            "Run a command through the Shizuku Android shell UID. FxForge rejects this tool unless the user has enabled full device control.",
+            JSONObject().put("type", "object")
+                .put("properties", JSONObject()
+                    .put("command", JSONObject().put("type", "string"))
+                    .put("timeout_seconds", JSONObject().put("type", "integer").put("minimum", 1).put("maximum", 60)))
+                .put("required", JSONArray().put("command"))
+        ))
+        tools.put(tool(
+            "android_install_apk",
+            "Install an APK from FxForge's private project workspace through Shizuku. Requires the user's full device-control toggle.",
+            JSONObject().put("type", "object")
+                .put("properties", JSONObject().put("path", JSONObject().put("type", "string")))
+                .put("required", JSONArray().put("path"))
+        ))
+        tools.put(tool(
+            "android_launch_app",
+            "Launch an installed Android app by package name through Shizuku. Requires the user's full device-control toggle.",
+            JSONObject().put("type", "object")
+                .put("properties", JSONObject().put("package_name", JSONObject().put("type", "string")))
+                .put("required", JSONArray().put("package_name"))
+        ))
         return tools
     }
 
