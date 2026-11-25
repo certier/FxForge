@@ -408,6 +408,7 @@ class AndroidMcpBridge(
             "Content-Type: " + contentType + "; charset=utf-8\r\n" +
             "Content-Length: " + bytes.size + "\r\n" +
             "Cache-Control: no-store\r\n" +
+            "MCP-Protocol-Version: " + MCP_PROTOCOL_VERSION + "\r\n" +
             "Connection: close\r\n\r\n"
         val output = socket.getOutputStream()
         output.write(headers.toByteArray(Charsets.US_ASCII))
