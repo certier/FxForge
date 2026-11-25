@@ -84,3 +84,19 @@ components are distributed under Apache License 2.0; see
 - License text: `third_party/licenses/opencode-MIT`
 - The CLI binary is downloaded by the official upstream installer; it is not
   bundled in the FxForge APK.
+
+
+## Shizuku API and provider
+
+- Component: Shizuku API and provider, version 13.1.5
+- Upstream: https://github.com/RikkaApps/Shizuku-API
+- License: Apache License 2.0
+- License text: `third_party/licenses/Apache-2.0`
+
+## AndroidX and Jetpack Compose
+
+- Components: AndroidX Activity, Lifecycle, DocumentFile, Compose UI, Foundation,
+  and Material 3
+- Upstream: https://developer.android.com/jetpack/androidx
+- License: Apache License 2.0
+- License text: `third_party/licenses/Apache-2.0`
