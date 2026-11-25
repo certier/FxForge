@@ -30,8 +30,7 @@ REPO_ARTIFACT_DIR="$ARTIFACT_DIR" \
 bash "$PROOT_SOURCE_DIR/tools/build-static-aarch64.sh"
 
 # Android Bionic requires at least 64-byte alignment for AArch64 TLS segments.
-python3 "$ROOT_DIR/scripts/fix-android-tls-alignment.py" \\
-    "$ARTIFACT_DIR/proot" "$ARTIFACT_DIR/loader" "$ARTIFACT_DIR/loader32"
+python3 "$ROOT_DIR/scripts/fix-android-tls-alignment.py" "$ARTIFACT_DIR/proot" "$ARTIFACT_DIR/loader" "$ARTIFACT_DIR/loader32"
 
 install -m 0755 "$ARTIFACT_DIR/proot" "$JNI_DIR/libfxforge_proot.so"
 install -m 0755 "$ARTIFACT_DIR/loader" "$JNI_DIR/libfxforge_proot_loader.so"
