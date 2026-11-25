@@ -55,3 +55,9 @@
 - The archive is downloaded on the device and verified before extraction.
   Debian packages retain their own copyright and license notices under the
   installed root filesystem's `/usr/share/doc` and `/usr/share/common-licenses`.
+
+
+The ARM64 Android build-tools executables are derived from Android Open Source
+Project components, including AAPT2, AIDL, ZIPALIGN, and split-select. Those
+components are distributed under Apache License 2.0; see
+`third_party/licenses/android-build-tools-Apache-2.0`.
