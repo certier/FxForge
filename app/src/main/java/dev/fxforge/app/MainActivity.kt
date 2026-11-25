@@ -540,6 +540,21 @@ private fun OpenCodeScreen(
                     )
                 }
                 Column(horizontalAlignment = androidx.compose.ui.Alignment.End) {
+                    Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+                        Text("Device control", style = MaterialTheme.typography.bodySmall)
+                        Checkbox(
+                            checked = mcpState.allowDeviceControl,
+                            onCheckedChange = { enabled ->
+                                allowDeviceControl = enabled
+                                try {
+                                    androidMcpBridge.start(enabled)
+                                } catch (exception: Exception) {
+                                    allowDeviceControl = false
+                                    mcpError = exception.message ?: "Could not update Android device-control permission."
+                                }
+                            }
+                        )
+                    }
                     TextButton(
                         enabled = workspaceState.selected && !workspaceState.syncing,
                         onClick = { scope.launch { runtimeManager.syncWorkspaceToSaf() } }
@@ -548,6 +563,7 @@ private fun OpenCodeScreen(
                     }
                     TextButton(onClick = {
                         androidMcpBridge.stop()
+                        allowDeviceControl = false
                         scope.launch { runtimeManager.stopOpenCode() }
                     }) {
                         Text("Stop")
@@ -580,7 +596,18 @@ private fun OpenCodeScreen(
                                 view: WebView?,
                                 request: WebResourceRequest?
                             ): Boolean {
-                                return request?.url?.host != "localhost"
+                                val uri = request?.url ?: return false
+                                if (uri.host == "localhost" || uri.host == "127.0.0.1") {
+                                    return false
+                                }
+                                if (uri.scheme == "https" || uri.scheme == "http") {
+                                    try {
+                                        view?.context?.startActivity(Intent(Intent.ACTION_VIEW, uri))
+                                    } catch (_: Exception) {
+                                        // Keep external navigation out of the embedded OpenCode WebView.
+                                    }
+                                }
+                                return true
                             }
                         }
                         webView = this
