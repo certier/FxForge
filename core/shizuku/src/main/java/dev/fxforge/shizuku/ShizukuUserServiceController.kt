@@ -128,6 +128,11 @@ class ShizukuUserServiceController(context: Context) {
         Shizuku.addBinderDeadListener(binderDeadListener)
     }
 
+    fun connectWhenAvailable() {
+        reconnectWhenAvailable = true
+        if (Shizuku.pingBinder()) connect()
+    }
+
     fun connect() {
         if (!Shizuku.pingBinder()) {
             setError("Shizuku binder is not connected")
