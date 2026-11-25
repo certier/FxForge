@@ -32,6 +32,7 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -51,6 +52,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.documentfile.provider.DocumentFile
 import dev.fxforge.shizuku.ShizukuApkInstallResult
+import dev.fxforge.shizuku.ShizukuCommandResult
 import dev.fxforge.shizuku.ShizukuPrivilege
 import dev.fxforge.shizuku.ShizukuStatusRepository
 import dev.fxforge.shizuku.ShizukuUserServiceController
@@ -84,7 +86,8 @@ private enum class Destination(val title: String, val marker: String) {
     HOME("Home", "H"),
     PROJECTS("Projects", "P"),
     DEVICE("Device", "D"),
-    ENVIRONMENT("Environment", "E")
+    ENVIRONMENT("Environment", "E"),
+    TERMINAL("Terminal", ">")
 }
 
 private data class ProjectEntry(
@@ -162,6 +165,7 @@ private fun FxForgeApp(
                 }
                 Destination.DEVICE -> DeviceScreen(repository, userServiceController, padding)
                 Destination.ENVIRONMENT -> EnvironmentScreen(padding)
+                Destination.TERMINAL -> TerminalScreen(userServiceController, padding)
             }
         }
 
@@ -308,6 +312,94 @@ private fun HomeScreen(repository: ShizukuStatusRepository, padding: PaddingValu
             )
         ) { feature ->
             Text("•  $feature", style = MaterialTheme.typography.bodyMedium)
+        }
+    }
+}
+
+@Composable
+private fun TerminalScreen(
+    controller: ShizukuUserServiceController,
+    padding: PaddingValues
+) {
+    val serviceStatus by controller.status.collectAsState()
+    val scope = rememberCoroutineScope()
+    var command by remember { mutableStateOf("id") }
+    var running by remember { mutableStateOf(false) }
+    var result by remember { mutableStateOf<ShizukuCommandResult?>(null) }
+    var history by remember { mutableStateOf<List<Pair<String, ShizukuCommandResult>>>(emptyList()) }
+
+    Column(
+        modifier = Modifier.fillMaxSize().padding(padding).padding(16.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        Text("Android shell", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
+        Text(
+            "Commands run as the UID reported by Shizuku. This is a command console, not a persistent PTY: each command starts a fresh shell process. Commands are sent only when you press Run."
+        )
+        InfoCard(
+            "Device service",
+            when {
+                serviceStatus.connected -> "Connected · UID \${serviceStatus.deviceFacts?.uid?.toString() ?: "not queried"}"
+                serviceStatus.connecting -> "Connecting…"
+                else -> "Not connected. Open Device and connect the Shizuku device service."
+            }
+        )
+        OutlinedTextField(
+            value = command,
+            onValueChange = { command = it },
+            modifier = Modifier.fillMaxWidth(),
+            label = { Text("Command") },
+            minLines = 2,
+            maxLines = 5,
+            enabled = !running,
+            placeholder = { Text("uname -a") }
+        )
+        Button(
+            enabled = serviceStatus.connected && !running && command.isNotBlank(),
+            onClick = {
+                val submitted = command.trim()
+                running = true
+                scope.launch {
+                    val response = controller.executeCommand(submitted, 30)
+                    result = response
+                    history = (history + (submitted to response)).takeLast(30)
+                    running = false
+                }
+            }
+        ) {
+            Text(if (running) "Running…" else "Run command")
+        }
+        if (running) CircularProgressIndicator()
+        result?.let { response ->
+            InfoCard(
+                "Exit status",
+                response.error ?: response.exitCode?.toString() ?: "No exit code returned"
+            )
+            if (response.truncated) {
+                Text("Output reached the 64 KiB limit and was truncated.")
+            }
+            Card(Modifier.fillMaxWidth()) {
+                SelectionContainer {
+                    Text(
+                        response.output.ifBlank { response.error ?: "(no output)" },
+                        modifier = Modifier.fillMaxWidth().heightIn(max = 320.dp).verticalScroll(rememberScrollState()).padding(12.dp),
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                }
+            }
+        }
+        Text("Recent commands", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+        history.asReversed().forEach { (input, response) ->
+            Card(Modifier.fillMaxWidth()) {
+                Column(Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text("$ $input", fontWeight = FontWeight.SemiBold)
+                    Text(
+                        response.error ?: "exit \${response.exitCode ?: "unknown"}",
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                    TextButton(onClick = { command = input }) { Text("Run again") }
+                }
+            }
         }
     }
 }
