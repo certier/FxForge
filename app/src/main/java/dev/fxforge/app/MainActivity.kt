@@ -36,6 +36,7 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
@@ -1049,6 +1050,8 @@ private fun ProjectsScreen(
     var selectedUri by remember { mutableStateOf(preferences.getString("tree_uri", null)) }
     var error by remember { mutableStateOf<String?>(null) }
     var entries by remember { mutableStateOf<List<ProjectEntry>>(emptyList()) }
+    var searchQuery by remember { mutableStateOf("") }
+    var selectedFilter by remember { mutableStateOf("All") }
     var loading by remember { mutableStateOf(false) }
     var currentDirectoryName by remember { mutableStateOf<String?>(null) }
     val directoryStack = remember { mutableStateListOf<DocumentFile>() }
@@ -1070,6 +1073,16 @@ private fun ProjectsScreen(
     }
 
     val currentDirectory = directoryStack.lastOrNull()
+    val visibleEntries = entries.filter { entry ->
+        val matchesQuery = searchQuery.isBlank() || entry.name.contains(searchQuery.trim(), ignoreCase = true)
+        val matchesFilter = when (selectedFilter) {
+            "Folders" -> entry.isDirectory
+            "Files" -> !entry.isDirectory && !entry.isApk
+            "APKs" -> entry.isApk
+            else -> true
+        }
+        matchesQuery && matchesFilter
+    }
     LaunchedEffect(currentDirectory, refreshToken) {
         if (currentDirectory == null) {
             entries = emptyList()
@@ -1127,31 +1140,64 @@ private fun ProjectsScreen(
     }
     LazyColumn(
         modifier = Modifier.fillMaxSize().padding(padding),
-        contentPadding = PaddingValues(20.dp),
+        contentPadding = PaddingValues(horizontal = 18.dp, vertical = 18.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
         item {
-            Text("Project folder", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
-            Text("Browse a folder through Android's Storage Access Framework. Access is limited to the folder you selected.")
+            Text("Projects", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+            Text("Browse, edit, build and install files in a folder you choose.", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
         item {
             if (selectedUri == null) {
-                Text("No project folder selected.")
+                Card(
+                    Modifier.fillMaxWidth(),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow)
+                ) {
+                    Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text("Choose your workspace", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                        Text("FxForge uses Android's folder picker. Your files stay in the location you select.", style = MaterialTheme.typography.bodyMedium)
+                        Button(onClick = { folderPicker.launch(null) }) { Text("Choose project folder") }
+                    }
+                }
             } else {
-                InfoCard(
-                    title = "Selected folder",
-                    detail = currentDirectoryName ?: selectedUri.orEmpty()
+                InfoCard("Selected workspace", currentDirectoryName ?: selectedUri.orEmpty())
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedButton(onClick = { folderPicker.launch(null) }) { Text("Change folder") }
+                    if (currentDirectory?.canWrite() == true) {
+                        Button(onClick = {
+                            createProjectError = null
+                            showCreateProject = true
+                        }) { Text("New project") }
+                    }
+                }
+            }
+        }
+        if (currentDirectory != null) {
+            item {
+                Text(
+                    directoryStack.joinToString("  /  ") { it.name ?: "Folder" },
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1
                 )
             }
-            Button(onClick = { folderPicker.launch(null) }) {
-                Text(if (selectedUri == null) "Choose project folder" else "Change project folder")
-            }
-            if (currentDirectory?.canWrite() == true) {
-                Button(onClick = {
-                    createProjectError = null
-                    showCreateProject = true
-                }) {
-                    Text("Create Android project")
+            item {
+                OutlinedTextField(
+                    value = searchQuery,
+                    onValueChange = { searchQuery = it },
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true,
+                    label = { Text("Search this folder") },
+                    placeholder = { Text("File or folder name") }
+                )
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    listOf("All", "Folders", "Files", "APKs").forEach { filter ->
+                        FilterChip(
+                            selected = selectedFilter == filter,
+                            onClick = { selectedFilter = filter },
+                            label = { Text(filter) }
+                        )
+                    }
                 }
             }
         }
@@ -1177,9 +1223,16 @@ private fun ProjectsScreen(
         if (loading) item { Text("Loading folder…") }
         error?.let { message -> item { Text(message, color = MaterialTheme.colorScheme.error) } }
         if (!loading && error == null && currentDirectory != null && entries.isEmpty()) {
-            item { Text("This folder is empty.") }
+            item {
+                InfoCard("Nothing here yet", "Create a new Android project or add files to this folder to get started.")
+            }
+        } else if (!loading && error == null && currentDirectory != null && visibleEntries.isEmpty()) {
+            item {
+                InfoCard("No matches", "Try another search or filter.")
+                TextButton(onClick = { searchQuery = ""; selectedFilter = "All" }) { Text("Clear search and filters") }
+            }
         }
-        items(entries, key = { it.uri }) { entry ->
+        items(visibleEntries, key = { it.uri }) { entry ->
             Card(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -1191,9 +1244,15 @@ private fun ProjectsScreen(
                         else Modifier
                     )
             ) {
-                Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                Row(
+                    Modifier.fillMaxWidth().padding(14.dp),
+                    verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    Text(if (entry.isDirectory) "📁" else if (entry.isApk) "📦" else "📄", style = MaterialTheme.typography.headlineSmall)
+                    Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
                     Text(
-                        "${if (entry.isDirectory) "Folder" else "File"} · ${entry.name}",
+                        entry.name,
                         style = MaterialTheme.typography.titleSmall,
                         fontWeight = FontWeight.SemiBold
                     )
@@ -1219,6 +1278,7 @@ private fun ProjectsScreen(
                                 Text("Install APK through Shizuku")
                             }
                         }
+                    }
                     }
                 }
             }
