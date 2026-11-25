@@ -215,7 +215,7 @@ class LinuxRuntimeManager(context: Context) {
             mutableSdkState.value = mutableSdkState.value.copy(phase = "Downloading Android command-line tools")
             val tools = runCommand(
                 "mkdir -p /opt/android-sdk/cmdline-tools /tmp/fxforge-sdk-tools && " +
-                    "curl -fL --retry 3 https://dl.google.com/android/repository/commandlinetools-linux-15859902_latest.zip -o /tmp/fxforge-sdk-tools.zip && " +
+                    "curl -fsSL --retry 3 https://dl.google.com/android/repository/commandlinetools-linux-15859902_latest.zip -o /tmp/fxforge-sdk-tools.zip && " +
                     "echo '4e4c464f145a7512b57d088ac6c278c03c9eea610886b35a5e0804e74eedf583  /tmp/fxforge-sdk-tools.zip' | sha256sum -c - && " +
                     "unzip -q /tmp/fxforge-sdk-tools.zip -d /tmp/fxforge-sdk-tools && " +
                     "mkdir -p /opt/android-sdk/cmdline-tools/latest && " +
@@ -236,7 +236,7 @@ class LinuxRuntimeManager(context: Context) {
             mutableSdkState.value = mutableSdkState.value.copy(phase = "Installing verified ARM64 build tools and Gradle")
             val nativeTools = runCommand(
                 "set -e && " +
-                    "curl -fL https://github.com/Commit451/android-arm-build-tools/releases/download/platform-tools-36.0.0/aapt2 -o /opt/android-sdk/build-tools/36.0.0/aapt2 && " +
+                    "curl -fsSL https://github.com/Commit451/android-arm-build-tools/releases/download/platform-tools-36.0.0/aapt2 -o /opt/android-sdk/build-tools/36.0.0/aapt2 && " +
                     "echo '7512ff7e381bea6fd310b6f6e347422c8fda21e07c6e3f0162742e95eb9d7f98  /opt/android-sdk/build-tools/36.0.0/aapt2' | sha256sum -c - && " +
                     "curl -fL https://github.com/Commit451/android-arm-build-tools/releases/download/platform-tools-36.0.0/aidl -o /opt/android-sdk/build-tools/36.0.0/aidl && " +
                     "echo '8c97356b8bba8f7aad44cfd408e3ee24c66a1258244b5d08af1c9249f50dd659  /opt/android-sdk/build-tools/36.0.0/aidl' | sha256sum -c - && " +
@@ -246,7 +246,7 @@ class LinuxRuntimeManager(context: Context) {
                     "echo 'fb7f0c3c87dbd4243d7e1277ba64ded2399389244058b6a4c969cc615360766c  /opt/android-sdk/build-tools/36.0.0/split-select' | sha256sum -c - && " +
                     "chmod 755 /opt/android-sdk/build-tools/36.0.0/aapt2 /opt/android-sdk/build-tools/36.0.0/aidl /opt/android-sdk/build-tools/36.0.0/zipalign /opt/android-sdk/build-tools/36.0.0/split-select && " +
                     "mkdir -p /opt/gradle && " +
-                    "curl -fL --retry 3 https://services.gradle.org/distributions/gradle-8.13-bin.zip -o /tmp/gradle-8.13-bin.zip && " +
+                    "curl -fsSL --retry 3 https://services.gradle.org/distributions/gradle-8.13-bin.zip -o /tmp/gradle-8.13-bin.zip && " +
                     "echo '20f1b1176237254a6fc204d8434196fa11a4cfb387567519c61556e8710aed78  /tmp/gradle-8.13-bin.zip' | sha256sum -c - && " +
                     "unzip -q /tmp/gradle-8.13-bin.zip -d /opt/gradle && " +
                     "rm -f /tmp/gradle-8.13-bin.zip && " +
