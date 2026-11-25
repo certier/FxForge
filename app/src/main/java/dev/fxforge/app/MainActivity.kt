@@ -20,6 +20,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.PaddingValues
@@ -39,6 +40,8 @@ import androidx.compose.material3.Checkbox
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
+import androidx.compose.material3.NavigationRail
+import androidx.compose.material3.NavigationRailItem
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
@@ -139,7 +142,24 @@ private fun FxForgeApp(
     var buildResult by remember { mutableStateOf<AndroidBuildResult?>(null) }
     var projectsRefreshToken by remember { mutableStateOf(0) }
 
-    Box(Modifier.fillMaxSize()) {
+    BoxWithConstraints(Modifier.fillMaxSize()) {
+        val useNavigationRail = maxWidth >= 600.dp
+        val selectedNavigationItem = if (destination == Destination.ENVIRONMENT || destination == Destination.OPENCODE) Destination.MORE else destination
+        Row(Modifier.fillMaxSize()) {
+            if (useNavigationRail && openFile == null) {
+                NavigationRail(containerColor = MaterialTheme.colorScheme.surfaceContainer) {
+                    listOf(Destination.HOME, Destination.PROJECTS, Destination.TERMINAL, Destination.DEVICE, Destination.MORE).forEach { item ->
+                        NavigationRailItem(
+                            selected = selectedNavigationItem == item,
+                            onClick = { destination = item },
+                            icon = { Text(item.marker, fontWeight = FontWeight.Bold) },
+                            label = { Text(item.title) }
+                        )
+                    }
+                }
+            }
+            Box(Modifier.weight(1f).fillMaxSize()) {
+                Box(Modifier.fillMaxSize()) {
         Scaffold(
             topBar = {
                 Surface(color = MaterialTheme.colorScheme.surface, tonalElevation = 2.dp) {
@@ -167,11 +187,11 @@ private fun FxForgeApp(
                 }
             },
             bottomBar = {
-                if (openFile == null) {
+                if (openFile == null && !useNavigationRail) {
                     NavigationBar(containerColor = MaterialTheme.colorScheme.surfaceContainer, tonalElevation = 3.dp) {
                         listOf(Destination.HOME, Destination.PROJECTS, Destination.TERMINAL, Destination.DEVICE, Destination.MORE).forEach { item ->
                             NavigationBarItem(
-                                selected = destination == item,
+                                selected = selectedNavigationItem == item,
                                 onClick = { destination = item },
                                 icon = { Text(item.marker, fontWeight = FontWeight.Bold) },
                                 label = { Text(item.title, maxLines = 1) }
@@ -403,6 +423,9 @@ private fun FxForgeApp(
                     }
                 }
             )
+        }
+                }
+            }
         }
     }
 }
