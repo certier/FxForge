@@ -2,7 +2,15 @@ name: Android
 
 on:
   push:
+    paths-ignore:
+      - "README.md"
+      - "THIRD_PARTY_NOTICES.md"
+      - "third_party/licenses/**"
   pull_request:
+    paths-ignore:
+      - "README.md"
+      - "THIRD_PARTY_NOTICES.md"
+      - "third_party/licenses/**"
 
 permissions:
   contents: read
