@@ -157,7 +157,7 @@ private fun FxForgeApp(
             }
         ) { padding ->
             when (destination) {
-                Destination.HOME -> HomeScreen(repository, padding)
+                Destination.HOME -> HomeScreen(repository, linuxRuntimeManager, androidMcpBridge, padding)
                 Destination.PROJECTS -> {
                     val file = openFile
                     if (file == null) {
@@ -375,8 +375,19 @@ private fun FxForgeApp(
 }
 
 @Composable
-private fun HomeScreen(repository: ShizukuStatusRepository, padding: PaddingValues) {
+private fun HomeScreen(
+    repository: ShizukuStatusRepository,
+    linuxRuntimeManager: LinuxRuntimeManager,
+    androidMcpBridge: AndroidMcpBridge,
+    padding: PaddingValues
+) {
     val status by repository.status.collectAsState()
+    val linuxState by linuxRuntimeManager.state.collectAsState()
+    val sdkState by linuxRuntimeManager.androidSdkState.collectAsState()
+    val openCodeState by linuxRuntimeManager.openCodeState.collectAsState()
+    val mcpState by androidMcpBridge.state.collectAsState()
+    val terminalState by linuxRuntimeManager.terminalState.collectAsState()
+    val workspaceState by linuxRuntimeManager.workspaceState.collectAsState()
     LazyColumn(
         modifier = Modifier.fillMaxSize().padding(padding),
         contentPadding = PaddingValues(16.dp),
@@ -384,8 +395,8 @@ private fun HomeScreen(repository: ShizukuStatusRepository, padding: PaddingValu
     ) {
         item {
             InfoCard(
-                title = "Foundation build",
-                detail = "Native Android UI, a SAF project browser and text editor, Shizuku diagnostics, APK installation, and an Android shell console."
+                title = "FxForge workstation",
+                detail = "Android project editor and scaffolder, Debian ARM64 environment, Gradle APK builds, embedded OpenCode, and Shizuku device tools."
             )
         }
         item {
@@ -393,23 +404,71 @@ private fun HomeScreen(repository: ShizukuStatusRepository, padding: PaddingValu
                 title = "Device bridge",
                 detail = when {
                     !status.binderAvailable -> "Shizuku binder is not connected."
-                    status.permissionGranted -> "Permission granted · ${status.privilege.label}"
+                    status.permissionGranted -> "Permission granted · " + status.privilege.label
                     else -> "Shizuku is connected; FxForge permission has not been granted."
                 }
             )
         }
         item {
-            Text("Not yet available", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
-        }
-        items(
-            listOf(
-                "Persistent Debian/Ubuntu ARM64 Linux userland and PTY",
-                "OpenCode runtime, model configuration, and agent sessions",
-                "On-device Android SDK, ARM64-compatible build tools, and Gradle builds",
-                "Git workspace integration and authenticated Android MCP bridge"
+            InfoCard(
+                "Debian Linux",
+                when {
+                    linuxState.installing -> linuxState.phase
+                    linuxState.installed -> "Debian Bookworm ARM64 installed"
+                    else -> "Not installed"
+                }
             )
-        ) { feature ->
-            Text("•  $feature", style = MaterialTheme.typography.bodyMedium)
+        }
+        item {
+            InfoCard(
+                "Android build toolchain",
+                when {
+                    sdkState.installing -> sdkState.phase
+                    sdkState.installed -> "Java 17 · Android API 36 · ARM64 Build Tools · Gradle 8.13"
+                    else -> "Not installed"
+                }
+            )
+        }
+        item {
+            InfoCard(
+                "OpenCode",
+                when {
+                    openCodeState.running -> "Server running · embedded web interface ready"
+                    openCodeState.starting -> "Starting local server…"
+                    openCodeState.installing -> "Installing…"
+                    openCodeState.installed -> "Installed · start it from the OpenCode tab"
+                    else -> "Not installed"
+                }
+            )
+        }
+        item {
+            InfoCard(
+                "Android MCP tools",
+                when {
+                    !mcpState.running -> "Disconnected"
+                    mcpState.allowDeviceControl -> "Connected · read-only and device-changing tools enabled"
+                    else -> "Connected · read-only device tools enabled"
+                }
+            )
+        }
+        item {
+            InfoCard(
+                "Linux shell",
+                if (terminalState.running) "Persistent Debian Bash session is running"
+                else "Stopped · " + if (linuxState.installed) "ready to start" else "install Debian first"
+            )
+        }
+        item {
+            InfoCard(
+                "Active project workspace",
+                workspaceState.name ?: "No SAF project folder selected"
+            )
+        }
+        item {
+            Text(
+                "The Linux shell is persistent but pipe-based rather than a kernel PTY. Full-screen terminal applications are not supported yet.",
+                style = MaterialTheme.typography.bodySmall
+            )
         }
     }
 }
