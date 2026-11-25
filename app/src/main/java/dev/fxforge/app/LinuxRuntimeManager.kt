@@ -383,11 +383,11 @@ class LinuxRuntimeManager(context: Context) {
         openCodeProcess = process
         captureOpenCodeOutput(process)
         var ready = false
-        repeat(OPEN_CODE_START_ATTEMPTS) {
-            if (!process.isAlive) return@repeat
+        for (attempt in 0 until OPEN_CODE_START_ATTEMPTS) {
+            if (!process.isAlive) break
             if (isOpenCodeServerReady(password)) {
                 ready = true
-                return@repeat
+                break
             }
             Thread.sleep(OPEN_CODE_POLL_INTERVAL_MS)
         }
