@@ -332,6 +332,7 @@ private fun OpenCodeScreen(
     padding: PaddingValues
 ) {
     val state by runtimeManager.openCodeState.collectAsState()
+    val linuxState by runtimeManager.state.collectAsState()
     val scope = rememberCoroutineScope()
     var webView by remember { mutableStateOf<WebView?>(null) }
 
@@ -419,14 +420,14 @@ private fun OpenCodeScreen(
             state.error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
             if (!state.installed) {
                 Button(
-                    enabled = !state.installing && runtimeManager.state.value.installed,
+                    enabled = !state.installing && linuxState.installed,
                     onClick = {
                         scope.launch { runtimeManager.installOpenCode() }
                     }
                 ) {
                     Text(if (state.installing) "Installing…" else "Install OpenCode")
                 }
-                if (!runtimeManager.state.value.installed) {
+                if (!linuxState.installed) {
                     Text("Install Debian first from Environment.")
                 }
             } else {
