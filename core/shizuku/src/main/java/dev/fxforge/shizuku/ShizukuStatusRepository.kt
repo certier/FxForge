@@ -33,7 +33,7 @@ class ShizukuStatusRepository {
         }
 
         try {
-            val uid = Shizuku.getUid()
+            val uid = Shizuku.getUid().takeIf { it >= 0 }
             val permissionGranted = !Shizuku.isPreV11() &&
                 Shizuku.checkSelfPermission() == PackageManager.PERMISSION_GRANTED
             mutableStatus.value = ShizukuStatus(

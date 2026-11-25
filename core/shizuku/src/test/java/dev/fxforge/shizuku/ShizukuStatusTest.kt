@@ -23,4 +23,10 @@ class ShizukuStatusTest {
     fun reportsPrivilegeUnavailableWithoutUid() {
         assertEquals(ShizukuPrivilege.UNAVAILABLE, ShizukuStatus().privilege)
     }
+
+    @Test
+    fun doesNotInferPrivilegeWhenShizukuHidesTheUid() {
+        val status = ShizukuStatus(binderAvailable = true, permissionGranted = false)
+        assertEquals(ShizukuPrivilege.UNAVAILABLE, status.privilege)
+    }
 }

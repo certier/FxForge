@@ -6,9 +6,11 @@ affiliated with the OpenCode team.
 > **Current status:** this repository contains the Android application
 > foundation, persistent Storage Access Framework (SAF) project-folder
 > selection, live Shizuku binder/permission/privilege reporting, and device
-> diagnostics. It does **not** yet contain a Linux userland, OpenCode runtime,
-> PTY terminal, Android SDK installer, editor, build pipeline, or Android MCP
-> bridge. No screen reports those capabilities as operational.
+> diagnostics. Shizuku UserService can also return basic device facts and the
+> actual service-process UID after explicit permission. It does **not** yet
+> contain a Linux userland, OpenCode runtime, PTY terminal, in-app Android SDK
+> installer/build toolchain, editor, or Android MCP bridge. No screen reports
+> those capabilities as operational.
 
 ## Build the Android app
 
@@ -40,9 +42,10 @@ UID actually reported by Shizuku and does not infer root access from a granted
 permission. On non-root setups, Shizuku may need to be started again after a
 device reboot.
 
-This initial integration reports binder and permission state only. It does
-not yet execute privileged operations or claim package installation, shell,
-logcat, or filesystem access.
+The UserService is non-daemon, explicitly unbound by FxForge, and only returns
+basic `Build` properties and its actual process UID. This is not arbitrary
+command execution; package installation, shell, logcat, and privileged
+filesystem operations are not implemented.
 
 ## Compatibility research and constraints
 
@@ -58,9 +61,8 @@ logcat, or filesystem access.
   executed by this repository yet.
 - No ARM64 AAPT2/AIDL distribution has been selected or verified. Google's
   host build tools are not treated as ARM64-compatible by assumption.
-- This development environment has no Android SDK, `adb`, or attached Android
-  device. An APK build and physical Shizuku validation therefore remain
-  unverified here.
+- No Android device is attached to this development environment. The APK
+  builds locally, but physical Shizuku validation remains unverified.
 
 ## Security and data
 

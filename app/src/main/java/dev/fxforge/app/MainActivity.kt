@@ -33,25 +33,32 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import dev.fxforge.shizuku.ShizukuPrivilege
 import dev.fxforge.shizuku.ShizukuStatusRepository
+import dev.fxforge.shizuku.ShizukuUserServiceController
+import kotlinx.coroutines.launch
 import java.io.IOException
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        val repository = (application as FxForgeApplication).shizukuStatusRepository
+        val fxForgeApplication = application as FxForgeApplication
         setContent {
             MaterialTheme {
                 Surface(
                     modifier = Modifier.fillMaxSize(),
                     color = MaterialTheme.colorScheme.background
                 ) {
-                    FxForgeApp(repository)
+                    FxForgeApp(
+                        fxForgeApplication.shizukuStatusRepository,
+                        fxForgeApplication.shizukuUserServiceController
+                    )
                 }
             }
         }
@@ -66,7 +73,10 @@ private enum class Destination(val title: String, val marker: String) {
 }
 
 @Composable
-private fun FxForgeApp(repository: ShizukuStatusRepository) {
+private fun FxForgeApp(
+    repository: ShizukuStatusRepository,
+    userServiceController: ShizukuUserServiceController
+) {
     var destination by remember { mutableStateOf(Destination.HOME) }
     Scaffold(
         topBar = {
@@ -91,7 +101,7 @@ private fun FxForgeApp(repository: ShizukuStatusRepository) {
         when (destination) {
             Destination.HOME -> HomeScreen(repository, padding)
             Destination.PROJECTS -> ProjectsScreen(padding)
-            Destination.DEVICE -> DeviceScreen(repository, padding)
+            Destination.DEVICE -> DeviceScreen(repository, userServiceController, padding)
             Destination.ENVIRONMENT -> EnvironmentScreen(padding)
         }
     }
@@ -183,9 +193,15 @@ private fun ProjectsScreen(padding: PaddingValues) {
 }
 
 @Composable
-private fun DeviceScreen(repository: ShizukuStatusRepository, padding: PaddingValues) {
+private fun DeviceScreen(
+    repository: ShizukuStatusRepository,
+    userServiceController: ShizukuUserServiceController,
+    padding: PaddingValues
+) {
     val context = LocalContext.current
     val status by repository.status.collectAsState()
+    val userServiceStatus by userServiceController.status.collectAsState()
+    val coroutineScope = rememberCoroutineScope()
     var requestError by remember { mutableStateOf<String?>(null) }
     Column(
         modifier = Modifier.fillMaxSize().padding(padding).padding(20.dp),
@@ -196,7 +212,11 @@ private fun DeviceScreen(repository: ShizukuStatusRepository, padding: PaddingVa
         InfoCard("FxForge permission", if (status.permissionGranted) "Granted" else "Not granted")
         InfoCard(
             "Reported privilege",
-            if (status.binderAvailable) "${status.privilege.label} (UID ${status.uid})" else "Unavailable"
+            when {
+                !status.binderAvailable -> "Unavailable"
+                !status.permissionGranted -> "Grant permission to read the Shizuku UID"
+                else -> "${status.privilege.label} (UID ${status.uid})"
+            }
         )
         if (status.binderAvailable && !status.permissionGranted) {
             Button(onClick = {
@@ -211,6 +231,44 @@ private fun DeviceScreen(repository: ShizukuStatusRepository, padding: PaddingVa
                 Text("Request Shizuku permission")
             }
         }
+        if (status.permissionGranted) {
+            Button(onClick = {
+                if (userServiceStatus.connected || userServiceStatus.connecting) {
+                    userServiceController.disconnect()
+                } else {
+                    userServiceController.connect()
+                }
+            }) {
+                Text(
+                    when {
+                        userServiceStatus.connected -> "Stop device service"
+                        userServiceStatus.connecting -> "Cancel device service"
+                        else -> "Connect Shizuku device service"
+                    }
+                )
+            }
+        }
+        if (userServiceStatus.connected) {
+            Button(onClick = {
+                coroutineScope.launch { userServiceController.readDeviceInfo() }
+            }) {
+                Text("Read device information through Shizuku")
+            }
+        }
+        userServiceStatus.deviceFacts?.let { facts ->
+            InfoCard(
+                "UserService-reported UID",
+                "${facts.uid} · ${ShizukuPrivilege.fromUid(facts.uid).label}"
+            )
+            InfoCard(
+                "Device information from UserService",
+                "${facts.manufacturer} ${facts.model} · Android ${facts.androidRelease} (API ${facts.apiLevel})\n" +
+                    "ABIs: ${facts.supportedAbis.joinToString()}\nBuild: ${facts.fingerprint}"
+            )
+        }
+        userServiceStatus.error?.let {
+            Text(it, color = MaterialTheme.colorScheme.error)
+        }
         TextButton(onClick = {
             context.startActivity(
                 Intent(Intent.ACTION_VIEW, "https://shizuku.rikka.app/guide/setup/".toUri())
@@ -220,7 +278,7 @@ private fun DeviceScreen(repository: ShizukuStatusRepository, padding: PaddingVa
         }
         requestError?.let { Text(it, color = MaterialTheme.colorScheme.error) }
         Text(
-            "ADB-started Shizuku normally uses UID 2000, not root. A granted permission does not provide root access. This build reports access state but does not execute privileged commands.",
+            "ADB-started Shizuku normally uses UID 2000, not root. The optional UserService runs under Shizuku's actual UID and only reads basic device facts; it does not provide arbitrary shell access.",
             style = MaterialTheme.typography.bodySmall
         )
     }

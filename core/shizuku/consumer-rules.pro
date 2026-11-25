@@ -1,0 +1,1 @@
+-keep class dev.fxforge.shizuku.AndroidDeviceUserService { *; }
