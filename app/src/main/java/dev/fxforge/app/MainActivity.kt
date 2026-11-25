@@ -829,11 +829,11 @@ private fun TerminalScreen(
     var linuxMode by remember { mutableStateOf(false) }
     Column(Modifier.fillMaxSize().padding(padding)) {
         Row(
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp),
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp),
             horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            Button(onClick = { linuxMode = false }) { Text("Android shell") }
-            Button(onClick = { linuxMode = true }) { Text("Debian Linux") }
+            FilterChip(selected = !linuxMode, onClick = { linuxMode = false }, label = { Text("Android shell") })
+            FilterChip(selected = linuxMode, onClick = { linuxMode = true }, label = { Text("Debian Linux") })
         }
         if (linuxMode) {
             LinuxTerminalPanel(runtimeManager, Modifier.weight(1f))
@@ -857,7 +857,7 @@ private fun AndroidTerminalPanel(
     val reportedUid = serviceStatus.deviceFacts?.uid?.toString() ?: "not queried"
 
     Column(
-        modifier = modifier.fillMaxSize().padding(16.dp),
+        modifier = modifier.fillMaxSize().padding(16.dp).verticalScroll(rememberScrollState()),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
         Text("Android shell", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
@@ -942,7 +942,7 @@ private fun LinuxTerminalPanel(
     var history by remember { mutableStateOf<List<Pair<String, LinuxCommandResult>>>(emptyList()) }
 
     Column(
-        modifier = modifier.fillMaxSize().padding(16.dp),
+        modifier = modifier.fillMaxSize().padding(16.dp).verticalScroll(rememberScrollState()),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
         Text("Debian Linux shell", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
