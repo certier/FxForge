@@ -731,38 +731,6 @@ private fun ProjectsScreen(
             )
         }
     }
-    if (showSdkLicense) {
-        AlertDialog(
-            onDismissRequest = { showSdkLicense = false },
-            title = { Text("Android SDK license") },
-            text = {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text(
-                        "FxForge will download Google's Android command-line tools, Android SDK Platform 36, and Build Tools 36.0.0. It will accept the SDK licenses only after your confirmation."
-                    )
-                    Text("The ARM64 native build tools and Gradle 8.13 will be checksum-verified before use. Keep at least 4 GiB free.")
-                    TextButton(onClick = {
-                        context.startActivity(
-                            Intent(Intent.ACTION_VIEW, "https://developer.android.com/studio/terms".toUri())
-                        )
-                    }) {
-                        Text("Read Android SDK terms")
-                    }
-                }
-            },
-            confirmButton = {
-                Button(onClick = {
-                    showSdkLicense = false
-                    scope.launch { linuxRuntimeManager.installAndroidSdk() }
-                }) {
-                    Text("I agree and install")
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { showSdkLicense = false }) { Text("Cancel") }
-            }
-        )
-    }
     if (showCreateProject) {
         val validationError = ProjectScaffolder.validate(projectName.trim(), packageName.trim())
         AlertDialog(
@@ -993,6 +961,38 @@ private fun EnvironmentScreen(padding: PaddingValues, linuxRuntimeManager: Linux
         "OpenCode" to "Not installed",
         "Android SDK build tools" to "Not installed in this app"
     )
+    if (showSdkLicense) {
+        AlertDialog(
+            onDismissRequest = { showSdkLicense = false },
+            title = { Text("Android SDK license") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(
+                        "FxForge will download Google's Android command-line tools, Android SDK Platform 36, and Build Tools 36.0.0. It will accept the SDK licenses only after your confirmation."
+                    )
+                    Text("The ARM64 native build tools and Gradle 8.13 will be checksum-verified before use. Keep at least 4 GiB free.")
+                    TextButton(onClick = {
+                        context.startActivity(
+                            Intent(Intent.ACTION_VIEW, "https://developer.android.com/studio/terms".toUri())
+                        )
+                    }) {
+                        Text("Read Android SDK terms")
+                    }
+                }
+            },
+            confirmButton = {
+                Button(onClick = {
+                    showSdkLicense = false
+                    scope.launch { linuxRuntimeManager.installAndroidSdk() }
+                }) {
+                    Text("I agree and install")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showSdkLicense = false }) { Text("Cancel") }
+            }
+        )
+    }
     LazyColumn(
         modifier = Modifier.fillMaxSize().padding(padding),
         contentPadding = PaddingValues(16.dp),
