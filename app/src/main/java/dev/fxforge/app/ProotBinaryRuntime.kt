@@ -55,21 +55,21 @@ object ProotBinaryRuntime {
         }
 
         return try {
+            if (!process.waitFor(PROBE_TIMEOUT_SECONDS, TimeUnit.SECONDS)) {
+                process.destroyForcibly()
+                process.waitFor(1, TimeUnit.SECONDS)
+                return ProotProbeResult(false, "", "PRoot version check timed out.")
+            }
             val output = process.inputStream.bufferedReader().use { reader ->
                 val buffer = CharArray(MAX_OUTPUT_CHARS)
                 val count = reader.read(buffer)
                 if (count <= 0) "" else String(buffer, 0, count)
             }
-            if (!process.waitFor(PROBE_TIMEOUT_SECONDS, TimeUnit.SECONDS)) {
-                process.destroyForcibly()
-                ProotProbeResult(false, output, "PRoot version check timed out.")
+            val exitCode = process.exitValue()
+            if (exitCode == 0) {
+                ProotProbeResult(true, output.trim())
             } else {
-                val exitCode = process.exitValue()
-                if (exitCode == 0) {
-                    ProotProbeResult(true, output.trim())
-                } else {
-                    ProotProbeResult(false, output.trim(), "PRoot exited with code " + exitCode + ".")
-                }
+                ProotProbeResult(false, output.trim(), "PRoot exited with code " + exitCode + ".")
             }
         } catch (exception: InterruptedException) {
             Thread.currentThread().interrupt()
