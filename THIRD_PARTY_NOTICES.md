@@ -43,3 +43,15 @@
 - License text: `third_party/licenses/android-arm-build-tools-MIT`
 - The four downloaded executables are SHA-256 verified before use inside the
   Debian Bookworm ARM64 userland. They are not bundled in the FxForge APK.
+
+
+## Debian Bookworm ARM64 root filesystem
+
+- Base image: Debian Bookworm slim, ARM64
+- Source: https://github.com/debuerreotype/docker-debian-artifacts
+- Pinned source commit: `657d5664bd8e7d6833fa48225b8110774cc17666`
+- Root filesystem archive SHA-256:
+  `7f1aa0b5c351d0542b2066749ed47608e5873bcdd1fd14f4df6f0a05cac02f8e`
+- The archive is downloaded on the device and verified before extraction.
+  Debian packages retain their own copyright and license notices under the
+  installed root filesystem's `/usr/share/doc` and `/usr/share/common-licenses`.
