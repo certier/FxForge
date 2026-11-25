@@ -14,6 +14,9 @@ class FxForgeApplication : Application() {
     val linuxRuntimeManager: LinuxRuntimeManager by lazy {
         LinuxRuntimeManager(this)
     }
+    val androidMcpBridge: AndroidMcpBridge by lazy {
+        AndroidMcpBridge(this, shizukuUserServiceController)
+    }
 
     override fun onCreate() {
         super.onCreate()
