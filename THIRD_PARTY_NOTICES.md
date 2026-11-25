@@ -31,3 +31,15 @@
   `third_party/talloc-2.4.2`
 - License: GNU General Public License, version 3
 - License text: `third_party/licenses/talloc-GPL-3.0`
+
+
+## ARM64 Android Build Tools
+
+- Component: ARM64 Linux builds of `aapt2`, `aidl`, `zipalign`, and
+  `split-select` for Android Build Tools 36.0.0
+- Upstream source and release: https://github.com/Commit451/android-arm-build-tools
+- Release tag: `platform-tools-36.0.0`
+- License: MIT
+- License text: `third_party/licenses/android-arm-build-tools-MIT`
+- The four downloaded executables are SHA-256 verified before use inside the
+  Debian Bookworm ARM64 userland. They are not bundled in the FxForge APK.
