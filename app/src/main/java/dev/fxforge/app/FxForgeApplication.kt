@@ -21,6 +21,6 @@ class FxForgeApplication : Application() {
     override fun onCreate() {
         super.onCreate()
         shizukuStatusRepository
-        shizukuUserServiceController
+        shizukuUserServiceController.connectWhenAvailable()
     }
 }
