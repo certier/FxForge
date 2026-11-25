@@ -11,6 +11,9 @@ class FxForgeApplication : Application() {
     val shizukuUserServiceController: ShizukuUserServiceController by lazy {
         ShizukuUserServiceController(this)
     }
+    val linuxRuntimeManager: LinuxRuntimeManager by lazy {
+        LinuxRuntimeManager(this)
+    }
 
     override fun onCreate() {
         super.onCreate()
