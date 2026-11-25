@@ -126,6 +126,9 @@ private fun FxForgeApp(
     var installResult by remember { mutableStateOf<ShizukuApkInstallResult?>(null) }
     var installError by remember { mutableStateOf<String?>(null) }
     var installingApk by remember { mutableStateOf(false) }
+    var projectToBuild by remember { mutableStateOf<DocumentFile?>(null) }
+    var buildingProject by remember { mutableStateOf(false) }
+    var buildResult by remember { mutableStateOf<AndroidBuildResult?>(null) }
 
     Box(Modifier.fillMaxSize()) {
         Scaffold(
@@ -162,6 +165,10 @@ private fun FxForgeApp(
                                 apkToInstall = it
                                 installResult = null
                                 installError = null
+                            },
+                            onBuildProject = {
+                                projectToBuild = it
+                                buildResult = null
                             }
                         )
                     } else {
@@ -177,6 +184,84 @@ private fun FxForgeApp(
                 Destination.TERMINAL -> TerminalScreen(userServiceController, padding)
                 Destination.OPENCODE -> OpenCodeScreen(linuxRuntimeManager, padding)
             }
+        }
+
+        projectToBuild?.let { target ->
+            AlertDialog(
+                onDismissRequest = {
+                    if (!buildingProject) {
+                        projectToBuild = null
+                        buildResult = null
+                    }
+                },
+                title = { Text("Build Android project") },
+                text = {
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text("FxForge copies this SAF folder into its private Debian workspace, runs Gradle with the ARM64 Android SDK, then copies the debug APK back into the project folder.")
+                        if (!linuxRuntimeManager.state.value.installed) {
+                            Text("Install Debian from Environment first.", color = MaterialTheme.colorScheme.error)
+                        }
+                        if (!linuxRuntimeManager.androidSdkState.value.installed) {
+                            Text("Install Android SDK and ARM64 build tools from Environment first.", color = MaterialTheme.colorScheme.error)
+                        }
+                        if (buildingProject) {
+                            CircularProgressIndicator()
+                            Text("Building on the ARM64 Linux toolchain…")
+                        }
+                        buildResult?.let { result ->
+                            Text(
+                                if (result.success) "Build successful. FxForge-debug.apk was saved in the selected project folder."
+                                else result.error ?: "Build failed.",
+                                color = if (result.success) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error
+                            )
+                            if (result.output.isNotBlank()) {
+                                Card(Modifier.fillMaxWidth()) {
+                                    SelectionContainer {
+                                        Text(
+                                            result.output.takeLast(6000),
+                                            modifier = Modifier.fillMaxWidth().heightIn(max = 260.dp).verticalScroll(rememberScrollState()).padding(12.dp),
+                                            style = MaterialTheme.typography.bodySmall
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+                },
+                confirmButton = {
+                    if (buildResult?.success == true) {
+                        Button(onClick = {
+                            projectToBuild = null
+                            buildResult = null
+                        }) { Text("Done") }
+                    } else {
+                        Button(
+                            enabled = !buildingProject &&
+                                linuxRuntimeManager.state.value.installed &&
+                                linuxRuntimeManager.androidSdkState.value.installed,
+                            onClick = {
+                                buildingProject = true
+                                buildResult = null
+                                coroutineScope.launch {
+                                    buildResult = linuxRuntimeManager.buildProject(target)
+                                    buildingProject = false
+                                }
+                            }
+                        ) {
+                            Text(if (buildingProject) "Building…" else if (buildResult == null) "Build debug APK" else "Retry build")
+                        }
+                    }
+                },
+                dismissButton = {
+                    TextButton(
+                        enabled = !buildingProject,
+                        onClick = {
+                            projectToBuild = null
+                            buildResult = null
+                        }
+                    ) { Text("Close") }
+                }
+            )
         }
 
         apkToInstall?.let { target ->
@@ -547,7 +632,8 @@ private fun TerminalScreen(
 private fun ProjectsScreen(
     padding: PaddingValues,
     onOpenFile: (ProjectFile) -> Unit,
-    onInstallApk: (ProjectFile) -> Unit
+    onInstallApk: (ProjectFile) -> Unit,
+    onBuildProject: (DocumentFile) -> Unit
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -672,6 +758,18 @@ private fun ProjectsScreen(
             item {
                 TextButton(onClick = { directoryStack.removeAt(directoryStack.lastIndex) }) {
                     Text("Up one folder")
+                }
+            }
+        }
+        if (currentDirectory?.let {
+                it.findFile("settings.gradle.kts")?.isFile == true ||
+                    it.findFile("settings.gradle")?.isFile == true
+            } == true) {
+            item {
+                Button(onClick = {
+                    currentDirectory?.let(onBuildProject)
+                }) {
+                    Text("Build debug APK")
                 }
             }
         }
