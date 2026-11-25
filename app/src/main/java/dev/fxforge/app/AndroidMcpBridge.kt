@@ -215,11 +215,17 @@ class AndroidMcpBridge(
         return when (request.optString("method")) {
             "initialize" -> {
                 val params = request.optJSONObject("params") ?: JSONObject()
+                val requestedVersion = params.optString("protocolVersion", MCP_PROTOCOL_VERSION)
+                val negotiatedVersion = if (requestedVersion in SUPPORTED_PROTOCOL_VERSIONS) {
+                    requestedVersion
+                } else {
+                    MCP_PROTOCOL_VERSION
+                }
                 JSONObject()
                     .put("jsonrpc", "2.0")
                     .put("id", id)
                     .put("result", JSONObject()
-                        .put("protocolVersion", MCP_PROTOCOL_VERSION)
+                        .put("protocolVersion", negotiatedVersion)
                         .put("capabilities", JSONObject().put("tools", JSONObject()))
                         .put("serverInfo", JSONObject()
                             .put("name", "fxforge-android")
@@ -432,7 +438,8 @@ class AndroidMcpBridge(
     }
 
     companion object {
-        private const val MCP_PROTOCOL_VERSION = "2025-06-18"
+        private const val MCP_PROTOCOL_VERSION = "2025-11-25"
+        private val SUPPORTED_PROTOCOL_VERSIONS = setOf("2025-11-25", "2025-06-18", "2025-03-26")
         private const val MAX_WORKERS = 4
         private const val MAX_REQUEST_BYTES = 1024 * 1024
         private const val MAX_HEADER_LINE_BYTES = 8192
