@@ -148,6 +148,20 @@ class LinuxRuntimeManager(context: Context) {
     fun isProotAvailable(): Boolean =
         Build.SUPPORTED_ABIS.any { it == "arm64-v8a" } && ProotBinaryRuntime.isBundled(appContext)
 
+    /**
+     * Android procfs can return ENOSYS for libgcrypt's FIPS sysctl probe.
+     * Overlay that guest path with a regular file containing 0 (FIPS disabled).
+     */
+    private fun prepareFipsCompatibilityFile(): File {
+        val source = File(runtimeDirectory, "proot-compat/fips_enabled")
+        source.parentFile?.mkdirs()
+        if (!source.isFile || source.readText() != "0\\n") source.writeText("0\\n")
+        val target = File(rootfsDirectory, "proc/sys/crypto/fips_enabled")
+        target.parentFile?.mkdirs()
+        if (!target.exists()) target.writeText("0\\n")
+        return source
+    }
+
     suspend fun installDebian() = withContext(Dispatchers.IO) {
         if (!isProotAvailable()) {
             mutableState.value = mutableState.value.copy(
@@ -366,6 +380,7 @@ class LinuxRuntimeManager(context: Context) {
         val binary = File(appContext.applicationInfo.nativeLibraryDir, PROOT_BINARY)
         val loader = File(appContext.applicationInfo.nativeLibraryDir, PROOT_LOADER)
         val loader32 = File(appContext.applicationInfo.nativeLibraryDir, PROOT_LOADER_32)
+        val fipsEnabledFile = prepareFipsCompatibilityFile()
         val process = try {
             ProcessBuilder(
                 binary.absolutePath,
@@ -374,6 +389,7 @@ class LinuxRuntimeManager(context: Context) {
                 "-r", rootfsDirectory.absolutePath,
                 "-b", "/dev",
                 "-b", "/proc",
+                "-b", fipsEnabledFile.absolutePath + ":/proc/sys/crypto/fips_enabled",
                 "-b", "/sys",
                 "-b", workspaceDirectory.absolutePath + ":/workspace",
                 "-w", "/workspace",
@@ -626,6 +642,7 @@ class LinuxRuntimeManager(context: Context) {
             val binary = File(appContext.applicationInfo.nativeLibraryDir, PROOT_BINARY)
             val loader = File(appContext.applicationInfo.nativeLibraryDir, PROOT_LOADER)
             val loader32 = File(appContext.applicationInfo.nativeLibraryDir, PROOT_LOADER_32)
+            val fipsEnabledFile = prepareFipsCompatibilityFile()
             try {
                 val process = ProcessBuilder(
                     binary.absolutePath,
@@ -634,6 +651,7 @@ class LinuxRuntimeManager(context: Context) {
                     "-r", rootfsDirectory.absolutePath,
                     "-b", "/dev",
                     "-b", "/proc",
+                    "-b", fipsEnabledFile.absolutePath + ":/proc/sys/crypto/fips_enabled",
                     "-b", "/sys",
                     "-b", workspaceDirectory.absolutePath + ":/workspace",
                     "-w", "/workspace",
@@ -896,6 +914,7 @@ class LinuxRuntimeManager(context: Context) {
             val binary = File(appContext.applicationInfo.nativeLibraryDir, PROOT_BINARY)
             val loader = File(appContext.applicationInfo.nativeLibraryDir, PROOT_LOADER)
             val loader32 = File(appContext.applicationInfo.nativeLibraryDir, PROOT_LOADER_32)
+            val fipsEnabledFile = prepareFipsCompatibilityFile()
             val prootArguments = mutableListOf(
                 binary.absolutePath,
                 "--link2symlink",
@@ -903,6 +922,7 @@ class LinuxRuntimeManager(context: Context) {
                 "-r", rootfsDirectory.absolutePath,
                 "-b", "/dev",
                 "-b", "/proc",
+                "-b", fipsEnabledFile.absolutePath + ":/proc/sys/crypto/fips_enabled",
                 "-b", "/sys"
             )
             binds.forEach { (hostPath, guestPath) ->
