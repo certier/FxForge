@@ -5,6 +5,10 @@ import android.content.Intent
 import android.os.Build
 import android.os.Bundle
 import android.os.storage.StorageManager
+import android.webkit.HttpAuthHandler
+import android.webkit.WebResourceRequest
+import android.webkit.WebView
+import android.webkit.WebViewClient
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
@@ -38,6 +42,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -50,6 +55,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.viewinterop.AndroidView
 import androidx.documentfile.provider.DocumentFile
 import dev.fxforge.shizuku.ShizukuApkInstallResult
 import dev.fxforge.shizuku.ShizukuCommandResult
@@ -88,7 +94,8 @@ private enum class Destination(val title: String, val marker: String) {
     PROJECTS("Projects", "P"),
     DEVICE("Device", "D"),
     ENVIRONMENT("Environment", "E"),
-    TERMINAL("Terminal", ">")
+    TERMINAL("Terminal", ">"),
+    OPENCODE("OpenCode", "AI")
 }
 
 private data class ProjectEntry(
@@ -168,6 +175,7 @@ private fun FxForgeApp(
                 Destination.DEVICE -> DeviceScreen(repository, userServiceController, padding)
                 Destination.ENVIRONMENT -> EnvironmentScreen(padding, linuxRuntimeManager)
                 Destination.TERMINAL -> TerminalScreen(userServiceController, padding)
+                Destination.OPENCODE -> OpenCodeScreen(linuxRuntimeManager, padding)
             }
         }
 
@@ -314,6 +322,135 @@ private fun HomeScreen(repository: ShizukuStatusRepository, padding: PaddingValu
             )
         ) { feature ->
             Text("•  $feature", style = MaterialTheme.typography.bodyMedium)
+        }
+    }
+}
+
+@Composable
+private fun OpenCodeScreen(
+    runtimeManager: LinuxRuntimeManager,
+    padding: PaddingValues
+) {
+    val state by runtimeManager.openCodeState.collectAsState()
+    val scope = rememberCoroutineScope()
+    var webView by remember { mutableStateOf<WebView?>(null) }
+
+    DisposableEffect(Unit) {
+        onDispose {
+            webView?.stopLoading()
+            webView?.destroy()
+            webView = null
+        }
+    }
+
+    if (state.running) {
+        Column(
+            modifier = Modifier.fillMaxSize().padding(padding),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp),
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Text("OpenCode · localhost:4096", fontWeight = FontWeight.SemiBold)
+                TextButton(onClick = {
+                    scope.launch { runtimeManager.stopOpenCode() }
+                }) {
+                    Text("Stop")
+                }
+            }
+            AndroidView(
+                modifier = Modifier.fillMaxSize(),
+                factory = { viewContext ->
+                    WebView(viewContext).apply {
+                        settings.javaScriptEnabled = true
+                        settings.domStorageEnabled = true
+                        settings.databaseEnabled = true
+                        webViewClient = object : WebViewClient() {
+                            override fun onReceivedHttpAuthRequest(
+                                view: WebView?,
+                                handler: HttpAuthHandler?,
+                                host: String?,
+                                realm: String?
+                            ) {
+                                val credentials = runtimeManager.openCodeCredentials()
+                                if (host == "localhost" && credentials != null) {
+                                    handler?.proceed(credentials.first, credentials.second)
+                                } else {
+                                    handler?.cancel()
+                                }
+                            }
+
+                            override fun shouldOverrideUrlLoading(
+                                view: WebView?,
+                                request: WebResourceRequest?
+                            ): Boolean {
+                                return request?.url?.host != "localhost"
+                            }
+                        }
+                        webView = this
+                        loadUrl(runtimeManager.openCodeUrl)
+                    }
+                },
+                update = { view ->
+                    if (view.url != runtimeManager.openCodeUrl) {
+                        view.loadUrl(runtimeManager.openCodeUrl)
+                    }
+                }
+            )
+        }
+    } else {
+        Column(
+            modifier = Modifier.fillMaxSize().padding(padding).padding(20.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            Text("OpenCode", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
+            Text("OpenCode runs as a Linux ARM64 process inside the Debian environment. FxForge embeds its local web interface in this screen.")
+            InfoCard(
+                "OpenCode status",
+                when {
+                    state.running -> "Server running"
+                    state.starting -> "Starting local server…"
+                    state.installing -> "Installing OpenCode v2…"
+                    state.installed -> "Installed"
+                    else -> "Not installed"
+                }
+            )
+            state.error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+            if (!state.installed) {
+                Button(
+                    enabled = !state.installing && runtimeManager.state.value.installed,
+                    onClick = {
+                        scope.launch { runtimeManager.installOpenCode() }
+                    }
+                ) {
+                    Text(if (state.installing) "Installing…" else "Install OpenCode")
+                }
+                if (!runtimeManager.state.value.installed) {
+                    Text("Install Debian first from Environment.")
+                }
+            } else {
+                Button(
+                    enabled = !state.starting,
+                    onClick = {
+                        scope.launch { runtimeManager.startOpenCode() }
+                    }
+                ) {
+                    Text(if (state.starting) "Starting…" else "Start OpenCode")
+                }
+            }
+            if (state.installing || state.starting) CircularProgressIndicator()
+            state.output?.let { output ->
+                Card(Modifier.fillMaxWidth()) {
+                    SelectionContainer {
+                        Text(
+                            output,
+                            modifier = Modifier.fillMaxWidth().heightIn(max = 240.dp).verticalScroll(rememberScrollState()).padding(12.dp),
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                    }
+                }
+            }
         }
     }
 }
