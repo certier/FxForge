@@ -880,6 +880,7 @@ private fun OpenCodeScreen(
     val workspaceState by runtimeManager.workspaceState.collectAsState()
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
+    val applicationScope = (context.applicationContext as FxForgeApplication).applicationScope
     val workspacePicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
         if (uri != null) {
             try {
@@ -1068,7 +1069,7 @@ private fun OpenCodeScreen(
                 Button(
                     enabled = !state.installing && linuxState.installed,
                     onClick = {
-                        scope.launch { runtimeManager.installOpenCode() }
+                        applicationScope.launch { runtimeManager.installOpenCode() }
                     }
                 ) {
                     Text(if (state.installing) "Installing…" else "Install OpenCode")
@@ -1862,6 +1863,7 @@ private fun DeviceScreen(
 private fun EnvironmentScreen(padding: PaddingValues, linuxRuntimeManager: LinuxRuntimeManager, onOpenOpenCode: () -> Unit) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
+    val applicationScope = (context.applicationContext as FxForgeApplication).applicationScope
     var probingProot by remember { mutableStateOf(false) }
     var prootProbe by remember { mutableStateOf<ProotProbeResult?>(null) }
     val linuxState by linuxRuntimeManager.state.collectAsState()
@@ -1917,7 +1919,7 @@ private fun EnvironmentScreen(padding: PaddingValues, linuxRuntimeManager: Linux
             confirmButton = {
                 Button(onClick = {
                     showSdkLicense = false
-                    scope.launch { linuxRuntimeManager.installAndroidSdk() }
+                    applicationScope.launch { linuxRuntimeManager.installAndroidSdk() }
                 }) {
                     Text("I agree and install")
                 }
@@ -2052,7 +2054,7 @@ private fun EnvironmentScreen(padding: PaddingValues, linuxRuntimeManager: Linux
                 Button(
                     enabled = !linuxState.installing && linuxRuntimeManager.isProotAvailable(),
                     onClick = {
-                        scope.launch { linuxRuntimeManager.installDebian() }
+                        applicationScope.launch { linuxRuntimeManager.installDebian() }
                     }
                 ) {
                     Text(if (linuxState.installing) "Installing Debian…" else "Install Debian ARM64")
