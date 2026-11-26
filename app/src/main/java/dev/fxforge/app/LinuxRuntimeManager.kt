@@ -354,11 +354,22 @@ class LinuxRuntimeManager(context: Context) {
             )
             return@withContext
         }
+        // A file existing is not proof that the CLI can execute in this PRoot.
+        // Verify it from inside Debian before reporting the installation as healthy.
         if (openCodeBinary.isFile) {
-            mutableOpenCodeState.value = OpenCodeState(installed = true)
-            return@withContext
+            val verification = runCommand(
+                "test -x /root/.opencode/bin/opencode && /root/.opencode/bin/opencode --version",
+                timeoutSeconds = 60
+            )
+            if (verification.exitCode == 0) {
+                mutableOpenCodeState.value = OpenCodeState(
+                    installed = true,
+                    output = verification.output
+                )
+                return@withContext
+            }
         }
-        mutableOpenCodeState.value = OpenCodeState(installing = true)
+        mutableOpenCodeState.value = OpenCodeState(installing = true, output = null)
         val installResult = runCommand(
             "set -eu; " +
                 "apt-get update; " +
@@ -371,7 +382,9 @@ class LinuxRuntimeManager(context: Context) {
             timeoutSeconds = 900,
             maxOutputChars = MAX_BUILD_OUTPUT_CHARS
         )
-        val installed = openCodeBinary.isFile && openCodeBinary.canExecute()
+        // The install script itself runs test -x and --version inside Debian;
+        // host-side File.canExecute() is not authoritative for PRoot guest files.
+        val installed = installResult.exitCode == 0 && openCodeBinary.isFile
         val failureDetails = when {
             installResult.error != null -> installResult.error
             installResult.exitCode != 0 -> buildString {
