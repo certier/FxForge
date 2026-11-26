@@ -767,11 +767,11 @@ class LinuxRuntimeManager(context: Context) {
     }
 
     suspend fun startTerminalSession() = withContext(Dispatchers.IO) {
-        workspaceMutex.withLock {
-            terminalMutex.withLock {
+        workspaceMutex.withLock workspaceLock@ {
+            terminalMutex.withLock terminalLock@ {
             if (terminalProcess?.isAlive == true) {
                 mutableTerminalState.value = LinuxTerminalState(running = true)
-                return@withLock
+                return@terminalLock
             }
             if (!markerFile.isFile || !isProotAvailable()) {
                 mutableTerminalState.value = LinuxTerminalState(
@@ -1057,6 +1057,9 @@ class LinuxRuntimeManager(context: Context) {
                         if (!stagingWorkspace.renameTo(targetWorkspace)) {
                             throw IOException("Could not activate the imported project workspace.")
                         }
+                    } catch (exception: CancellationException) {
+                        stagingWorkspace.deleteRecursively()
+                        throw exception
                     } catch (exception: Exception) {
                         stagingWorkspace.deleteRecursively()
                         throw exception
@@ -1079,6 +1082,12 @@ class LinuxRuntimeManager(context: Context) {
                         "Workspace ready · " + (source.name ?: "Android project")
                     }
                 )
+            } catch (exception: CancellationException) {
+                mutableWorkspaceState.value = mutableWorkspaceState.value.copy(
+                    syncing = false,
+                    error = "Workspace operation cancelled. Existing project files were preserved."
+                )
+                throw exception
             } catch (exception: Exception) {
                 mutableWorkspaceState.value = mutableWorkspaceState.value.copy(
                     syncing = false,
@@ -1159,6 +1168,12 @@ class LinuxRuntimeManager(context: Context) {
                 }
             )
             true
+        } catch (exception: CancellationException) {
+            mutableWorkspaceState.value = mutableWorkspaceState.value.copy(
+                syncing = false,
+                error = "Workspace synchronization cancelled. Run Sync again to reconcile any completed file operations."
+            )
+            throw exception
         } catch (exception: Exception) {
             mutableWorkspaceState.value = mutableWorkspaceState.value.copy(
                 syncing = false,
@@ -1311,6 +1326,8 @@ class LinuxRuntimeManager(context: Context) {
                         "FxForge-debug.apk"
                     )
                     AndroidBuildResult(true, result.output, copiedApk.uri.toString())
+                } catch (exception: CancellationException) {
+                    throw exception
                 } catch (exception: Exception) {
                     AndroidBuildResult(
                         false,
