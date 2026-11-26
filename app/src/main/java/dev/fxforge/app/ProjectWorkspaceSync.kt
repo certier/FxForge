@@ -26,8 +26,12 @@ object ProjectWorkspaceSync {
     internal data class SyncResult(
         val copiedToPrivate: Int,
         val copiedToStorage: Int,
+        val directoriesCreatedPrivate: Int,
+        val directoriesCreatedStorage: Int,
         val deletedFromPrivate: Int,
         val deletedFromStorage: Int,
+        val directoriesDeletedPrivate: Int,
+        val directoriesDeletedStorage: Int,
         val conflicts: List<WorkspaceSyncConflict>,
         val baselineAfter: Map<String, String>?
     )
@@ -54,31 +58,39 @@ object ProjectWorkspaceSync {
         val storageSnapshot = snapshotSaf(context, storageRoot)
         val plan = WorkspaceSyncPlanner.create(baseline, privateSnapshot, storageSnapshot)
         if (plan.conflicts.isNotEmpty() && preferPrivateOnConflicts == null) {
-            return SyncResult(0, 0, 0, 0, plan.conflicts, null)
+            return SyncResult(0, 0, 0, 0, 0, 0, 0, 0, plan.conflicts, null)
         }
 
-        val actions = plan.changes.toMutableList()
-        plan.conflicts.forEach { conflict ->
+        val conflictChanges = plan.conflicts.map { conflict ->
             val action = if (preferPrivateOnConflicts == true) {
+                val currentStorage = conflict.storageHash
+                    ?: throw IOException("Storage version disappeared while resolving conflict: " + conflict.path)
                 if (conflict.privateHash == null) {
-                    WorkspaceSyncAction.DELETE_FROM_STORAGE
+                    WorkspaceSyncPlanner.deleteAction(targetPrivate = false, currentHash = currentStorage)
                 } else {
-                    WorkspaceSyncAction.COPY_TO_STORAGE
+                    WorkspaceSyncPlanner.copyAction(targetPrivate = false, sourceHash = conflict.privateHash)
                 }
             } else {
+                val currentPrivate = conflict.privateHash
+                    ?: throw IOException("Private version disappeared while resolving conflict: " + conflict.path)
                 if (conflict.storageHash == null) {
-                    WorkspaceSyncAction.DELETE_FROM_PRIVATE
+                    WorkspaceSyncPlanner.deleteAction(targetPrivate = true, currentHash = currentPrivate)
                 } else {
-                    WorkspaceSyncAction.COPY_TO_PRIVATE
+                    WorkspaceSyncPlanner.copyAction(targetPrivate = true, sourceHash = conflict.storageHash)
                 }
             }
-            actions += WorkspaceSyncChange(conflict.path, action)
+            WorkspaceSyncChange(conflict.path, action)
         }
+        val actions = WorkspaceSyncPlanner.orderChanges(plan.changes + conflictChanges)
 
         var copiedToPrivate = 0
         var copiedToStorage = 0
+        var directoriesCreatedPrivate = 0
+        var directoriesCreatedStorage = 0
         var deletedFromPrivate = 0
         var deletedFromStorage = 0
+        var directoriesDeletedPrivate = 0
+        var directoriesDeletedStorage = 0
         for (change in actions) {
             val expectedHash = expectedHashForAction(
                 action = change.action,
@@ -97,6 +109,14 @@ object ProjectWorkspaceSync {
                     copyPrivateFileToSaf(context, privateRoot, storageRoot, change.path, expectedHash)
                     copiedToStorage++
                 }
+                WorkspaceSyncAction.CREATE_DIRECTORY_PRIVATE -> {
+                    createPrivateDirectory(privateRoot, change.path)
+                    directoriesCreatedPrivate++
+                }
+                WorkspaceSyncAction.CREATE_DIRECTORY_STORAGE -> {
+                    createStorageDirectory(storageRoot, change.path)
+                    directoriesCreatedStorage++
+                }
                 WorkspaceSyncAction.DELETE_FROM_PRIVATE -> {
                     deletePrivateFile(privateRoot, change.path, expectedHash)
                     deletedFromPrivate++
@@ -105,11 +125,19 @@ object ProjectWorkspaceSync {
                     deleteStorageFile(context, storageRoot, change.path, expectedHash)
                     deletedFromStorage++
                 }
+                WorkspaceSyncAction.DELETE_DIRECTORY_PRIVATE -> {
+                    deletePrivateDirectory(privateRoot, change.path)
+                    directoriesDeletedPrivate++
+                }
+                WorkspaceSyncAction.DELETE_DIRECTORY_STORAGE -> {
+                    deleteStorageDirectory(storageRoot, change.path)
+                    directoriesDeletedStorage++
+                }
             }
         }
 
         // Do not advance the common baseline unless both copies actually match.
-        // A file edited during sync is left as a detectable change for the next run.
+        // A file or folder edited during sync is left as a detectable change.
         val privateAfter = snapshotPrivate(privateRoot)
         val storageAfter = snapshotSaf(context, storageRoot)
         if (privateAfter != storageAfter) {
@@ -119,8 +147,12 @@ object ProjectWorkspaceSync {
         return SyncResult(
             copiedToPrivate = copiedToPrivate,
             copiedToStorage = copiedToStorage,
+            directoriesCreatedPrivate = directoriesCreatedPrivate,
+            directoriesCreatedStorage = directoriesCreatedStorage,
             deletedFromPrivate = deletedFromPrivate,
             deletedFromStorage = deletedFromStorage,
+            directoriesDeletedPrivate = directoriesDeletedPrivate,
+            directoriesDeletedStorage = directoriesDeletedStorage,
             conflicts = emptyList(),
             baselineAfter = privateAfter
         )
@@ -135,12 +167,16 @@ object ProjectWorkspaceSync {
         privateFiles: Map<String, String>,
         storageFiles: Map<String, String>
     ): String? = when (action) {
-        WorkspaceSyncAction.COPY_TO_PRIVATE -> storageFiles[path]
-        WorkspaceSyncAction.COPY_TO_STORAGE -> privateFiles[path]
-        // Delete operations verify the current file on the side being removed,
-        // not the old common baseline. This also handles explicit conflict choices.
-        WorkspaceSyncAction.DELETE_FROM_PRIVATE -> privateFiles[path]
-        WorkspaceSyncAction.DELETE_FROM_STORAGE -> storageFiles[path]
+        WorkspaceSyncAction.COPY_TO_PRIVATE,
+        WorkspaceSyncAction.CREATE_DIRECTORY_PRIVATE -> storageFiles[path]
+        WorkspaceSyncAction.COPY_TO_STORAGE,
+        WorkspaceSyncAction.CREATE_DIRECTORY_STORAGE -> privateFiles[path]
+        // Deletions verify the current entry on the side being removed, not the
+        // old common baseline. This also covers explicit conflict choices.
+        WorkspaceSyncAction.DELETE_FROM_PRIVATE,
+        WorkspaceSyncAction.DELETE_DIRECTORY_PRIVATE -> privateFiles[path]
+        WorkspaceSyncAction.DELETE_FROM_STORAGE,
+        WorkspaceSyncAction.DELETE_DIRECTORY_STORAGE -> storageFiles[path]
     }
 
     private fun snapshotPrivate(root: File): Map<String, String> {
@@ -168,6 +204,10 @@ object ProjectWorkspaceSync {
                 }
                 val relative = if (relativeDirectory.isEmpty()) name else "$relativeDirectory/$name"
                 if (child.isDirectory) {
+                    result[relative] = WORKSPACE_DIRECTORY_HASH
+                    if (result.size > MAX_FILES) {
+                        throw IOException("Workspace contains more than 10,000 workspace entries.")
+                    }
                     visit(child, relative, depth + 1)
                 } else if (child.isFile) {
                     if (child.length() > MAX_FILE_BYTES) {
@@ -179,7 +219,7 @@ object ProjectWorkspaceSync {
                     }
                     result[relative] = hashFile(child)
                     if (result.size > MAX_FILES) {
-                        throw IOException("Workspace contains more than 10,000 files.")
+                        throw IOException("Workspace contains more than 10,000 workspace entries.")
                     }
                 }
             }
@@ -209,6 +249,10 @@ object ProjectWorkspaceSync {
                     name.startsWith(".fxforge-delete-")) return@forEach
                 val relative = if (relativeDirectory.isEmpty()) name else "$relativeDirectory/$name"
                 if (child.isDirectory) {
+                    result[relative] = WORKSPACE_DIRECTORY_HASH
+                    if (result.size > MAX_FILES) {
+                        throw IOException("Workspace contains more than 10,000 workspace entries.")
+                    }
                     visit(child, relative, depth + 1)
                 } else if (child.isFile) {
                     if (!child.canRead()) throw IOException("Cannot read workspace file: " + relative)
