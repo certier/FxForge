@@ -347,6 +347,25 @@ class LinuxRuntimeManager(context: Context) {
         )
     }
 
+    suspend fun inspectInstalledTools(): LinuxCommandResult {
+        if (!markerFile.isFile) {
+            return LinuxCommandResult("", null, false, "Install Debian before inspecting Linux tools.")
+        }
+        return runCommand(
+            "set +e; " +
+                "echo '=== Debian ==='; cat /etc/os-release; " +
+                "echo '=== Architecture ==='; uname -m; " +
+                "echo '=== Java ==='; java -version 2>&1; " +
+                "echo '=== Gradle ==='; /opt/gradle/gradle-8.13/bin/gradle --version 2>&1 | head -n 5; " +
+                "echo '=== Android SDK Manager ==='; /opt/android-sdk/cmdline-tools/latest/bin/sdkmanager --version 2>&1; " +
+                "echo '=== Installed SDK packages ==='; /opt/android-sdk/cmdline-tools/latest/bin/sdkmanager --sdk_root=/opt/android-sdk --list_installed 2>&1 | head -n 50; " +
+                "echo '=== Android NDK ==='; if [ -d /opt/android-sdk/ndk ]; then find /opt/android-sdk/ndk -mindepth 1 -maxdepth 1 -type d -print; else echo 'Not installed'; fi; " +
+                "echo '=== Installed Debian packages ==='; dpkg-query -W -f='\${binary:Package} \${Version}\\n' 2>/dev/null | sort",
+            timeoutSeconds = 180,
+            maxOutputChars = 65536
+        )
+    }
+
     suspend fun installOpenCode() = withContext(Dispatchers.IO) {
         if (!markerFile.isFile) {
             mutableOpenCodeState.value = mutableOpenCodeState.value.copy(
