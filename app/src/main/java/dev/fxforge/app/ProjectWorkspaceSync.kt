@@ -365,6 +365,64 @@ object ProjectWorkspaceSync {
         }
     }
 
+    private fun createPrivateDirectory(root: File, relativePath: String) {
+        val target = resolvePrivateFile(root, relativePath)
+        if (target.exists()) {
+            if (target.isDirectory && !java.nio.file.Files.isSymbolicLink(target.toPath())) return
+            throw IOException("A file or symbolic link blocks the workspace folder path: " + relativePath)
+        }
+        val parent = target.parentFile
+            ?: throw IOException("Invalid workspace folder path: " + relativePath)
+        if (!parent.exists() && !parent.mkdirs()) {
+            throw IOException("Could not create workspace folder parent: " + relativePath)
+        }
+        if (!target.mkdir()) {
+            throw IOException("Could not create workspace folder: " + relativePath)
+        }
+    }
+
+    private fun createStorageDirectory(root: DocumentFile, relativePath: String) {
+        var current = root
+        safeSegments(relativePath).forEach { segment ->
+            val child = current.findFile(segment)
+            current = when {
+                child == null -> current.createDirectory(segment)
+                    ?: throw IOException("Could not create storage folder: " + relativePath)
+                child.isDirectory -> child
+                else -> throw IOException("A file blocks the storage folder path: " + relativePath)
+            }
+        }
+    }
+
+    private fun deletePrivateDirectory(root: File, relativePath: String) {
+        val target = resolvePrivateFile(root, relativePath)
+        if (!target.exists()) return
+        if (!target.isDirectory || java.nio.file.Files.isSymbolicLink(target.toPath())) {
+            throw IOException("Workspace folder changed type before deletion: " + relativePath)
+        }
+        val children = target.listFiles()
+            ?: throw IOException("Could not inspect workspace folder before deletion: " + relativePath)
+        if (children.isNotEmpty()) {
+            throw IOException("Workspace folder is not empty and was preserved: " + relativePath)
+        }
+        if (!target.delete()) {
+            throw IOException("Could not remove empty workspace folder: " + relativePath)
+        }
+    }
+
+    private fun deleteStorageDirectory(root: DocumentFile, relativePath: String) {
+        val target = findSafNode(root, relativePath) ?: return
+        if (!target.isDirectory) {
+            throw IOException("Storage folder changed type before deletion: " + relativePath)
+        }
+        if (target.listFiles().isNotEmpty()) {
+            throw IOException("Storage folder is not empty and was preserved: " + relativePath)
+        }
+        if (!target.delete()) {
+            throw IOException("Could not remove empty storage folder: " + relativePath)
+        }
+    }
+
     private fun deletePrivateFile(root: File, relativePath: String, expectedHash: String) {
         val target = resolvePrivateFile(root, relativePath)
         if (!target.exists()) return
@@ -415,15 +473,18 @@ object ProjectWorkspaceSync {
         return digest.digest().toHex()
     }
 
-    private fun findSafFile(root: DocumentFile, relativePath: String): DocumentFile? {
+    private fun findSafNode(root: DocumentFile, relativePath: String): DocumentFile? {
         var current = root
         val segments = safeSegments(relativePath)
         segments.forEachIndexed { index, segment ->
             current = current.findFile(segment) ?: return null
             if (index < segments.lastIndex && !current.isDirectory) return null
         }
-        return current.takeIf { it.isFile }
+        return current
     }
+
+    private fun findSafFile(root: DocumentFile, relativePath: String): DocumentFile? =
+        findSafNode(root, relativePath)?.takeIf { it.isFile }
 
     private fun ensureSafParent(root: DocumentFile, relativePath: String): DocumentFile {
         var current = root
