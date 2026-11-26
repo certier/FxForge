@@ -142,8 +142,7 @@ object ProjectWorkspaceSync {
                 validatePathSegment(name)
                 if (child.isDirectory && name in ignoredDirectoryNames) return@forEach
                 if (child.isFile && name in ignoredFileNames) return@forEach
-                if (name.startsWith(".fxforge-tmp-") || name.startsWith(".fxforge-backup-") ||
-                    name.startsWith(".fxforge-delete-")) return@forEach
+                if (isReservedSyncName(name)) return@forEach
                 if (java.nio.file.Files.isSymbolicLink(child.toPath())) {
                     throw IOException("Workspace contains a symbolic link that cannot be synchronized safely: " + name)
                 }
@@ -425,6 +424,9 @@ object ProjectWorkspaceSync {
         return segments
     }
 
+    private fun isReservedSyncName(name: String): Boolean =
+        ignoredSyncNames.any(name::startsWith)
+
     private fun validatePathSegment(name: String) {
         if (name.isBlank() || name == "." || name == ".." || name.contains('/') || name.contains('\\')) {
             throw IOException("Workspace contains an unsafe path segment.")
@@ -562,10 +564,7 @@ object ProjectWorkspaceSync {
                     validatePathSegment(name)
                     if (child.isDirectory && name in ignoredDirectoryNames) return@forEach
                     if (child.isFile && name in ignoredFileNames) return@forEach
-                    if (name.startsWith(".fxforge-tmp-") ||
-                        name.startsWith(".fxforge-backup-") ||
-                        name.startsWith(".fxforge-delete-")
-                    ) return@forEach
+                    if (isReservedSyncName(name)) return@forEach
                     if (java.nio.file.Files.isSymbolicLink(child.toPath())) {
                         throw IOException("Workspace contains a symbolic link that cannot be built safely: " + name)
                     }
@@ -765,6 +764,7 @@ object ProjectWorkspaceSync {
             }
             if (entry.isDirectory && name in ignoredDirectoryNames) return@forEach
             if (entry.isFile && name in ignoredFileNames) return@forEach
+            if (isReservedSyncName(name)) return@forEach
             val target = File(destination, name)
             if (target.canonicalFile.parentFile != destination.canonicalFile) {
                 throw IOException("The project contains an unsafe path.")
