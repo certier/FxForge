@@ -1345,12 +1345,28 @@ class LinuxRuntimeManager(context: Context) {
                     )
                 }
 
+                val activeWorkspaceUri = workspacePreferences.getString("tree_uri", null)
+                val isActiveWorkspace =
+                    activeWorkspaceUri == projectRoot.uri.toString() && workspaceDirectory.isDirectory
+                if (isActiveWorkspace && activeWorkspaceUri != null) {
+                    val synchronized = synchronizeWorkspaceLocked(
+                        projectRoot,
+                        activeWorkspaceUri,
+                        preferPrivateOnConflicts = null
+                    )
+                    if (!synchronized) {
+                        return@withLock AndroidBuildResult(
+                            false,
+                            "",
+                            error = workspaceState.value.error
+                                ?: "Resolve Workspace synchronization conflicts before building."
+                        )
+                    }
+                }
+
                 // Always build in an isolated snapshot. OpenCode and the terminal
                 // can keep using the live Workspace without observing Gradle's
                 // generated files or having their edits overwritten by a build.
-                val isActiveWorkspace =
-                    workspacePreferences.getString("tree_uri", null) == projectRoot.uri.toString() &&
-                        workspaceDirectory.isDirectory
                 val workspace = File(
                     appContext.filesDir,
                     "build-workspaces/" + UUID.randomUUID().toString()

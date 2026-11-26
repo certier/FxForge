@@ -879,7 +879,6 @@ private fun OpenCodeScreen(
     val mcpState by androidMcpBridge.state.collectAsState()
     val workspaceState by runtimeManager.workspaceState.collectAsState()
     val context = LocalContext.current
-    val scope = rememberCoroutineScope()
     val applicationScope = (context.applicationContext as FxForgeApplication).applicationScope
     var workspacePickerError by remember { mutableStateOf<String?>(null) }
     val workspacePicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
@@ -892,7 +891,7 @@ private fun OpenCodeScreen(
                 )
                 val root = DocumentFile.fromTreeUri(context, uri)
                     ?: throw IOException("Android could not open the selected folder.")
-                scope.launch { runtimeManager.syncWorkspaceFromSaf(root) }
+                applicationScope.launch { runtimeManager.syncWorkspaceFromSaf(root) }
             } catch (exception: SecurityException) {
                 workspacePickerError = "Android did not grant persistent workspace access: " +
                     (exception.message ?: "permission denied")
@@ -952,14 +951,14 @@ private fun OpenCodeScreen(
                     }
                     TextButton(
                         enabled = workspaceState.selected && !workspaceState.syncing,
-                        onClick = { scope.launch { runtimeManager.syncWorkspaceToSaf() } }
+                        onClick = { applicationScope.launch { runtimeManager.syncWorkspaceToSaf() } }
                     ) {
                         Text(if (workspaceState.syncing) "Syncing…" else "Sync")
                     }
                     TextButton(onClick = {
                         androidMcpBridge.stop()
                         allowDeviceControl = false
-                        scope.launch { runtimeManager.stopOpenCode() }
+                        applicationScope.launch { runtimeManager.stopOpenCode() }
                     }) {
                         Text("Stop")
                     }
@@ -1057,8 +1056,8 @@ private fun OpenCodeScreen(
             workspaceState.error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
             WorkspaceSyncFeedback(
                 state = workspaceState,
-                onKeepPrivate = { scope.launch { runtimeManager.syncWorkspaceToSaf(preferPrivateOnConflicts = true) } },
-                onKeepStorage = { scope.launch { runtimeManager.syncWorkspaceToSaf(preferPrivateOnConflicts = false) } }
+                onKeepPrivate = { applicationScope.launch { runtimeManager.syncWorkspaceToSaf(preferPrivateOnConflicts = true) } },
+                onKeepStorage = { applicationScope.launch { runtimeManager.syncWorkspaceToSaf(preferPrivateOnConflicts = false) } }
             )
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Button(
@@ -1069,7 +1068,7 @@ private fun OpenCodeScreen(
                 }
                 Button(
                     enabled = workspaceState.selected && !workspaceState.syncing,
-                    onClick = { scope.launch { runtimeManager.syncWorkspaceToSaf() } }
+                    onClick = { applicationScope.launch { runtimeManager.syncWorkspaceToSaf() } }
                 ) {
                     Text(if (workspaceState.syncing) "Syncing…" else "Sync both copies")
                 }
@@ -1099,7 +1098,7 @@ private fun OpenCodeScreen(
                 Button(
                     enabled = !state.starting && linuxState.installed,
                     onClick = {
-                        scope.launch {
+                        applicationScope.launch {
                             mcpError = null
                             try {
                                 val bridgeInfo = withContext(Dispatchers.IO) {
@@ -1372,6 +1371,7 @@ private fun ProjectsScreen(
     onUseInOpenCode: (DocumentFile) -> Unit
 ) {
     val context = LocalContext.current
+    val applicationScope = (context.applicationContext as FxForgeApplication).applicationScope
     val linuxState by linuxRuntimeManager.state.collectAsState()
     val workspaceState by linuxRuntimeManager.workspaceState.collectAsState()
     val scope = rememberCoroutineScope()
@@ -1527,8 +1527,8 @@ private fun ProjectsScreen(
                 }
                 WorkspaceSyncFeedback(
                     state = workspaceState,
-                    onKeepPrivate = { scope.launch { linuxRuntimeManager.syncWorkspaceToSaf(preferPrivateOnConflicts = true) } },
-                    onKeepStorage = { scope.launch { linuxRuntimeManager.syncWorkspaceToSaf(preferPrivateOnConflicts = false) } }
+                    onKeepPrivate = { applicationScope.launch { linuxRuntimeManager.syncWorkspaceToSaf(preferPrivateOnConflicts = true) } },
+                    onKeepStorage = { applicationScope.launch { linuxRuntimeManager.syncWorkspaceToSaf(preferPrivateOnConflicts = false) } }
                 )
             }
         }
