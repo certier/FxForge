@@ -125,11 +125,25 @@ object ProjectWorkspaceSync {
 
             when (change.action) {
                 WorkspaceSyncAction.COPY_TO_PRIVATE -> {
-                    copySafFileToPrivate(context, storageRoot, privateRoot, change.path, expectedHash)
+                    copySafFileToPrivate(
+                        context,
+                        storageRoot,
+                        privateRoot,
+                        change.path,
+                        expectedHash,
+                        expectedPrivateHash = privateSnapshot[change.path]
+                    )
                     copiedToPrivate++
                 }
                 WorkspaceSyncAction.COPY_TO_STORAGE -> {
-                    copyPrivateFileToSaf(context, privateRoot, storageRoot, change.path, expectedHash)
+                    copyPrivateFileToSaf(
+                        context,
+                        privateRoot,
+                        storageRoot,
+                        change.path,
+                        expectedHash,
+                        expectedStorageHash = storageSnapshot[change.path]
+                    )
                     copiedToStorage++
                 }
                 WorkspaceSyncAction.CREATE_DIRECTORY_PRIVATE -> {
@@ -313,7 +327,8 @@ object ProjectWorkspaceSync {
         storageRoot: DocumentFile,
         privateRoot: File,
         relativePath: String,
-        expectedHash: String
+        expectedHash: String,
+        expectedPrivateHash: String?
     ) {
         val source = findSafFile(storageRoot, relativePath)
             ?: throw IOException("Storage file disappeared during sync: " + relativePath)
@@ -343,7 +358,7 @@ object ProjectWorkspaceSync {
             if (digest.digest().toHex() != expectedHash) {
                 throw IOException("Storage file changed while it was being synchronized: " + relativePath)
             }
-            replacePrivateFile(staging, target, relativePath)
+            replacePrivateFile(staging, target, relativePath, expectedPrivateHash)
         } catch (exception: Exception) {
             staging.delete()
             throw exception
@@ -355,7 +370,8 @@ object ProjectWorkspaceSync {
         privateRoot: File,
         storageRoot: DocumentFile,
         relativePath: String,
-        expectedHash: String
+        expectedHash: String,
+        expectedStorageHash: String?
     ) {
         val source = resolvePrivateFile(privateRoot, relativePath)
         if (!source.isFile || java.nio.file.Files.isSymbolicLink(source.toPath())) {
@@ -368,7 +384,9 @@ object ProjectWorkspaceSync {
             destinationFolder = parent,
             name = relativePath.substringAfterLast('/'),
             mimeType = java.net.URLConnection.guessContentTypeFromName(relativePath)
-                ?: "application/octet-stream"
+                ?: "application/octet-stream",
+            expectedExistingHash = expectedStorageHash,
+            verifyExisting = true
         ) { output ->
             source.inputStream().use { input ->
                 val buffer = ByteArray(BUFFER_SIZE)
@@ -534,11 +552,20 @@ object ProjectWorkspaceSync {
         return target
     }
 
-    private fun replacePrivateFile(staging: File, target: File, relativePath: String) {
+    private fun replacePrivateFile(
+        staging: File,
+        target: File,
+        relativePath: String,
+        expectedExistingHash: String?
+    ) {
         if (java.nio.file.Files.isSymbolicLink(target.toPath()) ||
             (target.exists() && !target.isFile)
         ) {
             throw IOException("A folder or symbolic link blocks the synchronized file path: " + relativePath)
+        }
+        val currentHash = if (target.isFile) hashFile(target) else null
+        if (currentHash != expectedExistingHash) {
+            throw IOException("Private workspace destination changed during sync; its newer version was preserved: " + relativePath)
         }
         val backup = File(target.parentFile, ".fxforge-backup-" + UUID.randomUUID().toString())
         var movedOldFile = false
@@ -815,6 +842,8 @@ object ProjectWorkspaceSync {
         destinationFolder: DocumentFile,
         name: String,
         mimeType: String,
+        expectedExistingHash: String? = null,
+        verifyExisting: Boolean = false,
         writeContent: (java.io.OutputStream) -> Unit
     ): DocumentFile {
         if (name.isBlank() || name == "." || name == ".." ||
@@ -834,6 +863,16 @@ object ProjectWorkspaceSync {
             output.use(writeContent)
 
             val existing = destinationFolder.findFile(name)
+            if (verifyExisting) {
+                val currentHash = when {
+                    existing == null -> null
+                    existing.isFile -> hashSafFile(context, existing)
+                    else -> throw IOException("A storage folder blocks the synchronized file path: " + name)
+                }
+                if (currentHash != expectedExistingHash) {
+                    throw IOException("Storage destination changed during sync; its newer version was preserved: " + name)
+                }
+            }
             if (existing?.isDirectory == true) {
                 throw IOException("A folder already exists at the destination for " + name + ". Rename it before synchronizing this file.")
             }
