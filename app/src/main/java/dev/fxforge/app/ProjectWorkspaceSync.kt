@@ -431,6 +431,37 @@ object ProjectWorkspaceSync {
 
     private fun ByteArray.toHex(): String = joinToString("") { "%02x".format(it) }
 
+    /**
+     * Imports a SAF project only when the source and private copy are still
+     * identical after transfer. Intended for new staging/build directories,
+     * never for replacing an existing user's active workspace.
+     */
+    internal fun copyFromSafVerified(
+        context: Context,
+        source: DocumentFile,
+        destination: File
+    ): WorkspaceCopyResult {
+        if (destination.exists()) {
+            throw IOException("Verified project import requires a new staging directory.")
+        }
+        val before = snapshotSaf(context, source)
+        val copied = copyFromSaf(context, source, destination)
+        try {
+            val privateCopy = snapshotPrivate(destination)
+            val after = snapshotSaf(context, source)
+            if (before != privateCopy || before != after) {
+                throw IOException(
+                    "The selected project changed while it was being imported. " +
+                        "The incomplete private copy was removed; select the folder again to retry."
+                )
+            }
+            return copied
+        } catch (exception: Exception) {
+            destination.deleteRecursively()
+            throw exception
+        }
+    }
+
     fun copyFromSaf(
         context: Context,
         source: DocumentFile,
