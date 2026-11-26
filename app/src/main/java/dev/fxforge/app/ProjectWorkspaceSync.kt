@@ -5,6 +5,7 @@ import androidx.documentfile.provider.DocumentFile
 import java.io.File
 import java.io.FileOutputStream
 import java.io.IOException
+import java.util.UUID
 
 data class WorkspaceCopyResult(
     val directory: File,
@@ -96,15 +97,19 @@ object ProjectWorkspaceSync {
         if (!destinationFolder.isDirectory || !destinationFolder.canWrite()) {
             throw IOException("The selected project folder is no longer writable.")
         }
-        destinationFolder.findFile(outputName)?.delete()
-        val destination = destinationFolder.createFile("application/vnd.android.package-archive", outputName)
-            ?: throw IOException("Could not create the APK in the selected project folder.")
-        val output = context.contentResolver.openOutputStream(destination.uri, "wt")
-            ?: throw IOException("Could not open the destination APK for writing.")
-        artifact.inputStream().use { input ->
-            output.use { input.copyTo(it, BUFFER_SIZE) }
+        return writeSafFileAtomically(
+            context = context,
+            destinationFolder = destinationFolder,
+            name = outputName,
+            mimeType = "application/vnd.android.package-archive"
+        ) { output ->
+            artifact.inputStream().use { input ->
+                val copied = input.copyTo(output, BUFFER_SIZE)
+                if (copied != artifact.length()) {
+                    throw IOException("The generated APK changed while it was being copied.")
+                }
+            }
         }
-        return destination
     }
 
     fun copyToSaf(
@@ -157,28 +162,29 @@ object ProjectWorkspaceSync {
                 if (local.length() > MAX_FILE_BYTES) {
                     throw IOException("Workspace file exceeds the 512 MiB limit: " + name)
                 }
-                val target = if (existing?.isFile == true) {
-                    existing
-                } else {
-                    if (existing != null) deleteSafTree(existing)
-                    destination.createFile(
-                        java.net.URLConnection.guessContentTypeFromName(name) ?: "application/octet-stream",
-                        name
-                    ) ?: throw IOException("Could not create SAF file: " + name)
-                }
-                val output = context.contentResolver.openOutputStream(target.uri, "wt")
-                    ?: throw IOException("Could not open SAF file for writing: " + name)
-                local.inputStream().use { input ->
-                    output.use { outputStream ->
+                val sourceLength = local.length()
+                writeSafFileAtomically(
+                    context = context,
+                    destinationFolder = destination,
+                    name = name,
+                    mimeType = java.net.URLConnection.guessContentTypeFromName(name)
+                        ?: "application/octet-stream"
+                ) { output ->
+                    local.inputStream().use { input ->
                         val buffer = ByteArray(BUFFER_SIZE)
+                        var copiedForFile = 0L
                         while (true) {
                             val count = input.read(buffer)
                             if (count < 0) break
+                            copiedForFile += count
                             counter.bytes += count
-                            if (counter.bytes > MAX_TOTAL_BYTES) {
-                                throw IOException("Workspace exceeds FxForge's 2 GiB sync limit.")
+                            if (copiedForFile > MAX_FILE_BYTES || counter.bytes > MAX_TOTAL_BYTES) {
+                                throw IOException("Workspace exceeds FxForge's transfer-size limit.")
                             }
-                            outputStream.write(buffer, 0, count)
+                            output.write(buffer, 0, count)
+                        }
+                        if (copiedForFile != sourceLength) {
+                            throw IOException("Workspace file changed while it was being synced: " + name)
                         }
                     }
                 }
@@ -187,6 +193,69 @@ object ProjectWorkspaceSync {
                     throw IOException("Workspace contains more than 10,000 files.")
                 }
             }
+        }
+    }
+
+    /**
+     * Writes a complete sibling document first, then swaps it into place.
+     * Existing user files are never truncated in-place. Providers that do not
+     * support rename fail safely and leave the previous document untouched.
+     */
+    private fun writeSafFileAtomically(
+        context: Context,
+        destinationFolder: DocumentFile,
+        name: String,
+        mimeType: String,
+        writeContent: (java.io.OutputStream) -> Unit
+    ): DocumentFile {
+        val temporaryName = ".fxforge-tmp-" + UUID.randomUUID().toString()
+        val backupName = ".fxforge-backup-" + UUID.randomUUID().toString()
+        val staged = destinationFolder.createFile(mimeType, temporaryName)
+            ?: throw IOException("Could not create a temporary SAF file for: " + name)
+        var backup: DocumentFile? = null
+        try {
+            val output = context.contentResolver.openOutputStream(staged.uri, "wt")
+                ?: throw IOException("Could not open temporary SAF file for writing: " + name)
+            output.use(writeContent)
+
+            val existing = destinationFolder.findFile(name)
+            if (existing != null) {
+                if (!existing.renameTo(backupName)) {
+                    throw IOException(
+                        "The selected storage provider cannot safely replace " + name +
+                            ". The original file was left unchanged."
+                    )
+                }
+                backup = destinationFolder.findFile(backupName)
+                    ?: throw IOException("The previous file was renamed but its recovery copy could not be located: " + backupName)
+            }
+
+            if (!staged.renameTo(name)) {
+                val restored = backup?.renameTo(name) ?: (backup == null)
+                if (!restored) {
+                    throw IOException(
+                        "Could not activate the new file or restore the previous file. " +
+                            "The original is preserved as " + backupName
+                    )
+                }
+                backup = null
+                throw IOException("The storage provider could not activate the new file: " + name)
+            }
+
+            backup?.delete()
+            return destinationFolder.findFile(name)
+                ?: throw IOException("The storage provider did not return the completed file: " + name)
+        } catch (exception: Exception) {
+            staged.delete()
+            if (backup != null && destinationFolder.findFile(name) == null) {
+                if (!backup.renameTo(name)) {
+                    throw IOException(
+                        "Workspace sync failed and the previous file remains available as " + backupName,
+                        exception
+                    )
+                }
+            }
+            throw exception
         }
     }
 
