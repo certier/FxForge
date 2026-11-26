@@ -126,6 +126,8 @@ class LinuxRuntimeManager(context: Context) {
     val workspaceState: StateFlow<WorkspaceState> = mutableWorkspaceState.asStateFlow()
     private val terminalMutex = Mutex()
     private val workspaceMutex = Mutex()
+    @Volatile private var pendingWorkspaceUri: String? = null
+    @Volatile private var pendingWorkspaceName: String? = null
     private val mutableTerminalState = MutableStateFlow(LinuxTerminalState())
     val terminalState: StateFlow<LinuxTerminalState> = mutableTerminalState.asStateFlow()
     @Volatile private var terminalProcess: Process? = null
@@ -944,6 +946,8 @@ class LinuxRuntimeManager(context: Context) {
 
             val requestedUri = source.uri.toString()
             val activeUri = workspacePreferences.getString("tree_uri", null)
+            pendingWorkspaceUri = null
+            pendingWorkspaceName = null
             mutableWorkspaceState.value = mutableWorkspaceState.value.copy(
                 syncing = true,
                 error = null,
@@ -1022,9 +1026,11 @@ class LinuxRuntimeManager(context: Context) {
                         loadWorkspaceBaseline(requestedUri)
                     )
                     if (restored.conflicts.isNotEmpty()) {
+                        pendingWorkspaceUri = requestedUri
+                        pendingWorkspaceName = source.name ?: "Android project"
                         mutableWorkspaceState.value = mutableWorkspaceState.value.copy(
                             syncing = false,
-                            error = "This saved workspace has conflicts with its storage folder. Resolve them before opening it.",
+                            error = "This saved workspace has conflicts with its storage folder. Choose which copy to keep before opening it.",
                             conflicts = restored.conflicts.map { it.path }
                         )
                         return@withLock
@@ -1064,6 +1070,8 @@ class LinuxRuntimeManager(context: Context) {
                 if (!saved) {
                     throw IOException("Could not save the active workspace selection. The imported project files remain available.")
                 }
+                pendingWorkspaceUri = null
+                pendingWorkspaceName = null
                 mutableWorkspaceState.value = WorkspaceState(
                     selected = true,
                     name = source.name ?: "Android project",
@@ -1091,7 +1099,8 @@ class LinuxRuntimeManager(context: Context) {
     suspend fun syncWorkspaceToSaf(preferPrivateOnConflicts: Boolean? = null) =
         withContext(Dispatchers.IO) {
             workspaceMutex.withLock {
-                val uri = workspacePreferences.getString("tree_uri", null)
+                val targetPendingUri = pendingWorkspaceUri
+                val uri = targetPendingUri ?: workspacePreferences.getString("tree_uri", null)
                 if (uri.isNullOrBlank()) {
                     mutableWorkspaceState.value = mutableWorkspaceState.value.copy(
                         error = "Choose a project folder before synchronizing changes."
@@ -1100,14 +1109,40 @@ class LinuxRuntimeManager(context: Context) {
                 }
                 val destination =
                     androidx.documentfile.provider.DocumentFile.fromTreeUri(appContext, Uri.parse(uri))
-                if (destination == null) {
+                if (destination == null || !destination.isDirectory ||
+                    !destination.canRead() || !destination.canWrite()
+                ) {
                     mutableWorkspaceState.value = mutableWorkspaceState.value.copy(
                         syncing = false,
-                        error = "The saved workspace folder is no longer available. Private files were preserved."
+                        error = "The selected workspace folder is no longer available. Private files were preserved."
                     )
                     return@withLock
                 }
-                synchronizeWorkspaceLocked(destination, uri, preferPrivateOnConflicts)
+                val synchronized = synchronizeWorkspaceLocked(destination, uri, preferPrivateOnConflicts)
+                if (!synchronized || targetPendingUri != uri) return@withLock
+
+                val name = pendingWorkspaceName ?: destination.name ?: "Android project"
+                val saved = workspacePreferences.edit()
+                    .putString("tree_uri", uri)
+                    .putString("tree_name", name)
+                    .commit()
+                if (!saved) {
+                    mutableWorkspaceState.value = mutableWorkspaceState.value.copy(
+                        syncing = false,
+                        error = "The project was synchronized, but FxForge could not activate it. Its private copy remains saved."
+                    )
+                    return@withLock
+                }
+                pendingWorkspaceUri = null
+                pendingWorkspaceName = null
+                mutableWorkspaceState.value = mutableWorkspaceState.value.copy(
+                    selected = true,
+                    name = name,
+                    syncing = false,
+                    error = null,
+                    conflicts = emptyList(),
+                    lastSyncSummary = "Workspace activated · " + name
+                )
             }
         }
 
@@ -1127,10 +1162,19 @@ class LinuxRuntimeManager(context: Context) {
         )
         return try {
             val baseline = loadWorkspaceBaseline(uri)
+            val activeUri = workspacePreferences.getString("tree_uri", null)
+            val privateDirectory = if (activeUri == uri) {
+                workspaceDirectory
+            } else {
+                workspaceDirectoryFor(uri)
+            }
+            if (!privateDirectory.isDirectory) {
+                throw IOException("The private workspace for this project is unavailable. Existing project folders were preserved.")
+            }
             val result = ProjectWorkspaceSync.synchronize(
                 appContext,
                 storageRoot,
-                workspaceDirectory,
+                privateDirectory,
                 baseline,
                 preferPrivateOnConflicts
             )
