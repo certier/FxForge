@@ -997,7 +997,7 @@ private fun OpenCodeScreen(
         }
     } else {
         Column(
-            modifier = Modifier.fillMaxSize().padding(padding).padding(20.dp),
+            modifier = Modifier.fillMaxSize().padding(padding).padding(20.dp).verticalScroll(rememberScrollState()),
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
             Text("OpenCode", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
@@ -1012,7 +1012,21 @@ private fun OpenCodeScreen(
                     else -> "Not installed"
                 }
             )
-            state.error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+            state.error?.let { error ->
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer)
+                ) {
+                    SelectionContainer {
+                        Text(
+                            error,
+                            modifier = Modifier.fillMaxWidth().padding(14.dp),
+                            color = MaterialTheme.colorScheme.onErrorContainer,
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                    }
+                }
+            }
             mcpError?.let { Text(it, color = MaterialTheme.colorScheme.error) }
             InfoCard(
                 "Project workspace",
