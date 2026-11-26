@@ -630,17 +630,17 @@ private fun HomeScreen(
                     )
                     SetupStepRow(
                         number = "2",
-                        title = "Android SDK & build tools",
-                        detail = if (sdkState.installed) "Java 17 · API 36 · ARM64 tools ready" else if (sdkState.installing) sdkState.phase else "Install the SDK after Debian",
-                        complete = sdkState.installed,
-                        active = linuxState.installed && !sdkState.installed
+                        title = "OpenCode",
+                        detail = if (openCodeState.running) "Installed and running" else if (openCodeState.installed) "Installed · ready to launch" else if (openCodeState.installing) "Installing OpenCode…" else "Can be installed as soon as Debian is ready",
+                        complete = openCodeState.installed,
+                        active = linuxState.installed && !openCodeState.installed
                     )
                     SetupStepRow(
                         number = "3",
-                        title = "OpenCode",
-                        detail = if (openCodeState.running) "Installed and running" else if (openCodeState.installed) "Installed · ready to launch" else if (openCodeState.installing) "Installing OpenCode…" else "Your AI coding workspace",
-                        complete = openCodeState.installed,
-                        active = sdkState.installed && !openCodeState.installed
+                        title = "Android SDK & build tools",
+                        detail = if (sdkState.installed) "Java 17 · API 36 · ARM64 tools ready" else if (sdkState.installing) sdkState.phase else "Required for Android app builds · several GB download",
+                        complete = sdkState.installed,
+                        active = linuxState.installed && openCodeState.installed && !sdkState.installed
                     )
                     SetupStepRow(
                         number = "4",
