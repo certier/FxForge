@@ -81,7 +81,30 @@ object ProjectWorkspaceSync {
             }
             WorkspaceSyncChange(conflict.path, action)
         }
-        val actions = WorkspaceSyncPlanner.orderChanges(plan.changes + conflictChanges)
+        val combinedActions = plan.changes + conflictChanges
+        val actions = WorkspaceSyncPlanner.orderChanges(
+            combinedActions.filterNot { candidate ->
+                val isDirectoryDeletion =
+                    candidate.action == WorkspaceSyncAction.DELETE_DIRECTORY_PRIVATE ||
+                        candidate.action == WorkspaceSyncAction.DELETE_DIRECTORY_STORAGE
+                if (!isDirectoryDeletion) {
+                    false
+                } else {
+                    conflictChanges.any { conflictChange ->
+                        val isDescendant = conflictChange.path.startsWith(candidate.path + "/")
+                        isDescendant && when (candidate.action) {
+                            WorkspaceSyncAction.DELETE_DIRECTORY_PRIVATE ->
+                                conflictChange.action == WorkspaceSyncAction.COPY_TO_STORAGE ||
+                                    conflictChange.action == WorkspaceSyncAction.CREATE_DIRECTORY_STORAGE
+                            WorkspaceSyncAction.DELETE_DIRECTORY_STORAGE ->
+                                conflictChange.action == WorkspaceSyncAction.COPY_TO_PRIVATE ||
+                                    conflictChange.action == WorkspaceSyncAction.CREATE_DIRECTORY_PRIVATE
+                            else -> false
+                        }
+                    }
+                }
+            }
+        )
 
         var copiedToPrivate = 0
         var copiedToStorage = 0
