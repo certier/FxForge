@@ -42,6 +42,13 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Code
+import androidx.compose.material.icons.filled.Devices
+import androidx.compose.material.icons.filled.Folder
+import androidx.compose.material.icons.filled.Home
+import androidx.compose.material.icons.filled.MoreHoriz
+import androidx.compose.material3.Icon
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
@@ -119,14 +126,26 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-private enum class Destination(val title: String, val marker: String) {
-    HOME("Home", "⌂"),
-    PROJECTS("Projects", "▦"),
-    DEVICE("Device", "◉"),
-    TERMINAL("Terminal", ">_"),
-    MORE("More", "•••"),
-    ENVIRONMENT("Environment", "⚙"),
-    OPENCODE("OpenCode", "AI")
+private enum class Destination(val title: String) {
+    HOME("Home"),
+    PROJECTS("Projects"),
+    DEVICE("Device"),
+    TERMINAL("Terminal"),
+    MORE("More"),
+    ENVIRONMENT("Environment"),
+    OPENCODE("OpenCode")
+}
+
+@Composable
+private fun DestinationIcon(destination: Destination) {
+    val image = when (destination) {
+        Destination.HOME -> Icons.Filled.Home
+        Destination.PROJECTS -> Icons.Filled.Folder
+        Destination.DEVICE -> Icons.Filled.Devices
+        Destination.TERMINAL, Destination.OPENCODE -> Icons.Filled.Code
+        Destination.MORE, Destination.ENVIRONMENT -> Icons.Filled.MoreHoriz
+    }
+    Icon(imageVector = image, contentDescription = destination.title)
 }
 
 private data class ProjectEntry(
@@ -176,7 +195,7 @@ private fun FxForgeApp(
                         NavigationRailItem(
                             selected = selectedNavigationItem == item,
                             onClick = { destination = item },
-                            icon = { Text(item.marker, fontWeight = FontWeight.Bold) },
+                            icon = { DestinationIcon(item) },
                             label = { Text(item.title) }
                         )
                     }
@@ -217,7 +236,7 @@ private fun FxForgeApp(
                             NavigationBarItem(
                                 selected = selectedNavigationItem == item,
                                 onClick = { destination = item },
-                                icon = { Text(item.marker, fontWeight = FontWeight.Bold) },
+                                icon = { DestinationIcon(item) },
                                 label = { Text(item.title, maxLines = 1) }
                             )
                         }
