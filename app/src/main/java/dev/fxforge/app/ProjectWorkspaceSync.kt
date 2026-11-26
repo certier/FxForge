@@ -390,6 +390,11 @@ object ProjectWorkspaceSync {
     }
 
     private fun replacePrivateFile(staging: File, target: File, relativePath: String) {
+        if (java.nio.file.Files.isSymbolicLink(target.toPath()) ||
+            (target.exists() && !target.isFile)
+        ) {
+            throw IOException("A folder or symbolic link blocks the synchronized file path: " + relativePath)
+        }
         val backup = File(target.parentFile, ".fxforge-backup-" + UUID.randomUUID().toString())
         var movedOldFile = false
         if (target.exists()) {
@@ -404,6 +409,8 @@ object ProjectWorkspaceSync {
             }
             throw IOException("Could not activate synchronized workspace file: " + relativePath)
         }
+        // A failed cleanup must not turn an already-committed replacement into
+        // a reported failure. Keep the backup for recovery/cleanup instead.
         if (movedOldFile) backup.delete()
     }
 
@@ -515,90 +522,6 @@ object ProjectWorkspaceSync {
         }
     }
 
-    fun copyToSaf(
-        context: Context,
-        source: File,
-        destination: DocumentFile
-    ): WorkspaceCopyResult {
-        if (!source.isDirectory || !destination.isDirectory || !destination.canWrite()) {
-            throw IOException("The active workspace or SAF destination is unavailable.")
-        }
-        val counter = CopyCounter()
-        mirrorDirectory(context, source, destination, counter, 0)
-        return WorkspaceCopyResult(source, counter.files, counter.bytes)
-    }
-
-    private fun mirrorDirectory(
-        context: Context,
-        source: File,
-        destination: DocumentFile,
-        counter: CopyCounter,
-        depth: Int
-    ) {
-        if (depth > 32) throw IOException("Workspace folder nesting is too deep.")
-        val localChildren = source.listFiles()
-            ?: throw IOException("Could not read workspace directory: " + source.name)
-        val included = localChildren.filterNot { child ->
-            (child.isDirectory && child.name in ignoredDirectoryNames) ||
-                (child.isFile && child.name in ignoredFileNames)
-        }
-        included.forEach { child ->
-            val name = child.name
-            if (name.isBlank() || name == "." || name == ".." || name.contains('/') || name.contains('\\')) {
-                throw IOException("The workspace contains an invalid filename.")
-            }
-            val local = File(source, name)
-            if (local.canonicalFile.parentFile != source.canonicalFile) {
-                throw IOException("The workspace contains an unsafe path.")
-            }
-            val existing = destination.findFile(name)
-            if (local.isDirectory) {
-                val directory = if (existing?.isDirectory == true) {
-                    existing
-                } else {
-                    if (existing != null) deleteSafTree(existing)
-                    destination.createDirectory(name)
-                        ?: throw IOException("Could not create SAF directory: " + name)
-                }
-                mirrorDirectory(context, local, directory, counter, depth + 1)
-            } else if (local.isFile) {
-                if (local.length() > MAX_FILE_BYTES) {
-                    throw IOException("Workspace file exceeds the 512 MiB limit: " + name)
-                }
-                val sourceLength = local.length()
-                writeSafFileAtomically(
-                    context = context,
-                    destinationFolder = destination,
-                    name = name,
-                    mimeType = java.net.URLConnection.guessContentTypeFromName(name)
-                        ?: "application/octet-stream"
-                ) { output ->
-                    local.inputStream().use { input ->
-                        val buffer = ByteArray(BUFFER_SIZE)
-                        var copiedForFile = 0L
-                        while (true) {
-                            val count = input.read(buffer)
-                            if (count < 0) break
-                            copiedForFile += count
-                            counter.bytes += count
-                            if (copiedForFile > MAX_FILE_BYTES || counter.bytes > MAX_TOTAL_BYTES) {
-                                throw IOException("Workspace exceeds FxForge's transfer-size limit.")
-                            }
-                            output.write(buffer, 0, count)
-                        }
-                        if (copiedForFile != sourceLength) {
-                            throw IOException("Workspace file changed while it was being synced: " + name)
-                        }
-                    }
-                }
-                counter.files++
-                if (counter.files > MAX_FILES) {
-                    throw IOException("Workspace contains more than 10,000 files.")
-                }
-            }
-        }
-    }
-
     /**
      * Writes a complete sibling document first, then swaps it into place.
      * Existing user files are never truncated in-place. Providers that do not
@@ -611,17 +534,26 @@ object ProjectWorkspaceSync {
         mimeType: String,
         writeContent: (java.io.OutputStream) -> Unit
     ): DocumentFile {
+        if (name.isBlank() || name == "." || name == ".." ||
+            name.contains('/') || name.contains('\\')
+        ) {
+            throw IOException("A synchronized document must have a single safe filename.")
+        }
         val temporaryName = ".fxforge-tmp-" + UUID.randomUUID().toString()
         val backupName = ".fxforge-backup-" + UUID.randomUUID().toString()
         val staged = destinationFolder.createFile(mimeType, temporaryName)
             ?: throw IOException("Could not create a temporary SAF file for: " + name)
         var backup: DocumentFile? = null
+        var activated = false
         try {
             val output = context.contentResolver.openOutputStream(staged.uri, "wt")
                 ?: throw IOException("Could not open temporary SAF file for writing: " + name)
             output.use(writeContent)
 
             val existing = destinationFolder.findFile(name)
+            if (existing?.isDirectory == true) {
+                throw IOException("A folder already exists at the destination for " + name + ". Rename it before synchronizing this file.")
+            }
             if (existing != null) {
                 if (!existing.renameTo(backupName)) {
                     throw IOException(
@@ -643,31 +575,33 @@ object ProjectWorkspaceSync {
                 backup = null
                 throw IOException("The storage provider could not activate the new file: " + name)
             }
+            activated = true
 
-            backup?.let(::deleteSafTree)
-            return destinationFolder.findFile(name)
-                ?: throw IOException("The storage provider did not return the completed file: " + name)
+            val result = destinationFolder.findFile(name)
+                ?: staged.takeIf { it.isFile && it.name == name }
+                ?: throw IOException(
+                    "The replacement was activated but the storage provider could not verify it. " +
+                        "The previous file, when present, is preserved as " + backupName
+                )
+
+            // Never report a committed replacement as failed just because the
+            // provider refuses to delete its hidden recovery document.
+            backup?.delete()
+            return result
         } catch (exception: Exception) {
-            staged.delete()
-            val recoveryDocument = backup ?: destinationFolder.findFile(backupName)
-            if (recoveryDocument != null && destinationFolder.findFile(name) == null) {
-                if (!recoveryDocument.renameTo(name)) {
-                    throw IOException(
-                        "Workspace sync failed and the previous file remains available as " + backupName,
-                        exception
-                    )
+            if (!activated) staged.delete()
+            if (!activated) {
+                val recoveryDocument = backup ?: destinationFolder.findFile(backupName)
+                if (recoveryDocument != null && destinationFolder.findFile(name) == null) {
+                    if (!recoveryDocument.renameTo(name)) {
+                        throw IOException(
+                            "Workspace sync failed and the previous file remains available as " + backupName,
+                            exception
+                        )
+                    }
                 }
             }
             throw exception
-        }
-    }
-
-    private fun deleteSafTree(document: DocumentFile) {
-        if (document.isDirectory) {
-            document.listFiles().forEach(::deleteSafTree)
-        }
-        if (!document.delete()) {
-            throw IOException("Could not remove an obsolete SAF item: " + (document.name ?: "unnamed"))
         }
     }
 
