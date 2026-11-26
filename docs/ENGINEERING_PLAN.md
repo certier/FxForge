@@ -191,4 +191,18 @@ CI passing is never reported as physical-device verification.
 
 ## Current execution state
 
-The first implementation slice is P0 Workspace integrity: per-project private directories, conflict-aware sync planning and explicit conflict choice. The latest CI run on that slice found a Kotlin visibility error in the sync result API; it has been corrected in commit `8570ce2`. The next run must pass before this Workspace slice is extended.
+The current branch has completed the first CI-validated P0 implementation slice. CI run [45829957949](https://github.com/certier/FxForge/actions/runs/45829957949) passed all of the following on commit `943c24e7`:
+
+- ARM64 PRoot compilation and artifact upload.
+- `testDebugUnitTest`, including three-way Workspace conflict planning, unsafe-path rejection, isolated build snapshot checks, and current-version verification for explicit conflict deletion choices.
+- Debug APK assembly and upload.
+
+The implemented P0 slice now includes per-project private directories keyed by SAF tree URI, persisted per-project sync manifests, verified SAF imports, staged private and SAF file replacement, three-way SHA-256 conflict detection, explicit keep-private/keep-storage resolution, conflict routing for cached projects, restoration after SAF permission is re-granted, and isolated verified build snapshots so Gradle does not mutate the live OpenCode Workspace. OpenCode and Linux terminal start/stop operations are serialized with project switching.
+
+**P0 is not declared complete yet.** Remaining acceptance work includes:
+- End-to-end SAF sync tests against real DocumentProvider implementations, including rename failures, revoked grants and process interruption.
+- Explicit handling and tests for empty-directory changes and file-versus-directory path collisions.
+- A user-facing backup/export and recovery path for private workspaces whose original SAF tree has been removed or whose permission cannot be restored.
+- Physical-device testing of project import, conflict resolution, switching, OpenCode, terminal and Gradle builds while the workspace is open.
+
+CI success verifies compilation and JVM tests only; it does not establish that PRoot, Debian, APT, OpenCode or Shizuku work on an Android device.

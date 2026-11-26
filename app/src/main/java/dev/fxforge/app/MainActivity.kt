@@ -2250,11 +2250,17 @@ private fun WorkspaceSyncFeedback(
                     )
                 }
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Button(onClick = onKeepPrivate) {
-                        Text("Keep FxForge copy")
+                    Button(
+                        enabled = !state.syncing,
+                        onClick = onKeepPrivate
+                    ) {
+                        Text(if (state.syncing) "Resolving…" else "Keep FxForge copy")
                     }
-                    OutlinedButton(onClick = onKeepStorage) {
-                        Text("Keep folder copy")
+                    OutlinedButton(
+                        enabled = !state.syncing,
+                        onClick = onKeepStorage
+                    ) {
+                        Text(if (state.syncing) "Resolving…" else "Keep folder copy")
                     }
                 }
             }
