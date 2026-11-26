@@ -98,6 +98,76 @@ class AndroidDeviceUserService : IAndroidDeviceService.Stub() {
         }
     }
 
+    override fun executeCommand(command: String, timeoutSeconds: Int): Bundle {
+        if (command.isBlank()) return commandResult(error = "Enter a command first")
+        if (command.length > MAX_COMMAND_CHARS) {
+            return commandResult(error = "Command exceeds the $MAX_COMMAND_CHARS character limit")
+        }
+        val timeout = timeoutSeconds.coerceIn(1, MAX_COMMAND_TIMEOUT_SECONDS)
+        val process = try {
+            ProcessBuilder("/system/bin/sh", "-c", command)
+                .redirectErrorStream(true)
+                .start()
+        } catch (exception: IOException) {
+            return commandResult(error = "Could not start Android shell: ${exception.message ?: "process error"}")
+        } catch (exception: SecurityException) {
+            return commandResult(error = "Android denied shell execution: ${exception.message ?: "permission denied"}")
+        }
+
+        val outputTask = FutureTask {
+            process.inputStream.use { stream ->
+                InputStreamReader(stream, StandardCharsets.UTF_8).use { reader ->
+                    val output = StringBuilder()
+                    val buffer = CharArray(4096)
+                    var truncated = false
+                    while (true) {
+                        val count = reader.read(buffer)
+                        if (count < 0) break
+                        val remaining = MAX_COMMAND_OUTPUT_CHARS - output.length
+                        if (count > remaining) {
+                            output.append(buffer, 0, remaining)
+                            truncated = true
+                            process.destroyForcibly()
+                            break
+                        }
+                        output.append(buffer, 0, count)
+                    }
+                    CommandOutput(output.toString(), truncated)
+                }
+            }
+        }
+        Thread(outputTask, "fxforge-shell-reader").apply {
+            isDaemon = true
+            start()
+        }
+
+        return try {
+            if (!process.waitFor(timeout.toLong(), TimeUnit.SECONDS)) {
+                process.destroyForcibly()
+                commandResult(error = "Command timed out after $timeout seconds")
+            } else {
+                val output = outputTask.get(COMMAND_READER_TIMEOUT_SECONDS, TimeUnit.SECONDS)
+                commandResult(
+                    output = output.text,
+                    exitCode = process.exitValue(),
+                    truncated = output.truncated
+                )
+            }
+        } catch (exception: InterruptedException) {
+            Thread.currentThread().interrupt()
+            process.destroyForcibly()
+            commandResult(error = "Command was interrupted")
+        } catch (exception: ExecutionException) {
+            process.destroyForcibly()
+            commandResult(error = "Could not read command output: ${exception.cause?.message ?: "stream error"}")
+        } catch (exception: TimeoutException) {
+            process.destroyForcibly()
+            commandResult(error = "Timed out while reading command output")
+        } finally {
+            if (process.isAlive) process.destroyForcibly()
+        }
+    }
+
     override fun installApk(apkDescriptor: ParcelFileDescriptor): Bundle {
         val result = ShizukuApkInstaller.install(apkDescriptor, Process.myUid())
         return Bundle().apply {
@@ -109,6 +179,18 @@ class AndroidDeviceUserService : IAndroidDeviceService.Stub() {
 
     override fun destroy() {
         System.exit(0)
+    }
+
+    private fun commandResult(
+        output: String = "",
+        exitCode: Int = -1,
+        truncated: Boolean = false,
+        error: String? = null
+    ) = Bundle().apply {
+        putString(KEY_COMMAND_OUTPUT, output)
+        putInt(KEY_COMMAND_EXIT_CODE, exitCode)
+        putBoolean(KEY_COMMAND_TRUNCATED, truncated)
+        putString(KEY_COMMAND_ERROR, error)
     }
 
     private fun logcatResult(
@@ -135,9 +217,18 @@ class AndroidDeviceUserService : IAndroidDeviceService.Stub() {
         const val KEY_INSTALL_SUCCESS = "installSuccess"
         const val KEY_INSTALL_OUTPUT = "installOutput"
         const val KEY_INSTALL_ERROR = "installError"
+        const val KEY_COMMAND_OUTPUT = "commandOutput"
+        const val KEY_COMMAND_EXIT_CODE = "commandExitCode"
+        const val KEY_COMMAND_TRUNCATED = "commandTruncated"
+        const val KEY_COMMAND_ERROR = "commandError"
+        private const val MAX_COMMAND_CHARS = 8192
+        private const val MAX_COMMAND_OUTPUT_CHARS = 64 * 1024
+        private const val MAX_COMMAND_TIMEOUT_SECONDS = 60
+        private const val COMMAND_READER_TIMEOUT_SECONDS = 2L
         private const val LOGCAT_TIMEOUT_SECONDS = 8L
         private const val LOGCAT_READER_TIMEOUT_SECONDS = 2L
     }
 }
 
 private data class LogcatOutput(val text: String, val truncated: Boolean)
+private data class CommandOutput(val text: String, val truncated: Boolean)

@@ -8,4 +8,5 @@ interface IAndroidDeviceService {
     Bundle getDeviceInfo() = 1;
     Bundle readLogcat(int maxLines) = 2;
     Bundle installApk(in ParcelFileDescriptor apkDescriptor) = 3;
+    Bundle executeCommand(String command, int timeoutSeconds) = 4;
 }

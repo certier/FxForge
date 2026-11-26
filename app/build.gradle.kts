@@ -12,13 +12,17 @@ android {
         applicationId = "dev.fxforge.app"
         minSdk = 26
         targetSdk = 36
-        versionCode = 4
-        versionName = "0.1.0-pre.5"
+        versionCode = 5
+        versionName = "0.1.0-pre.6"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
     buildFeatures {
         compose = true
+    }
+
+    packaging {
+        jniLibs.useLegacyPackaging = true
     }
 
     compileOptions {
@@ -42,8 +46,11 @@ dependencies {
     implementation("androidx.documentfile:documentfile:1.0.1")
     implementation("io.github.rosemoe:editor:0.24.6")
     implementation("io.github.rosemoe:language-java:0.24.6")
+    implementation("org.apache.commons:commons-compress:1.28.0")
     implementation(platform("androidx.compose:compose-bom:2025.10.00"))
     implementation("androidx.compose.foundation:foundation")
+    implementation("androidx.compose.material:material-icons-core")
+    implementation("androidx.compose.material:material-icons-extended")
     implementation("androidx.compose.material3:material3")
     implementation("androidx.compose.ui:ui")
     implementation("androidx.compose.ui:ui-tooling-preview")

@@ -2,10 +2,22 @@ name: Android
 
 on:
   push:
+    paths-ignore:
+      - "README.md"
+      - "THIRD_PARTY_NOTICES.md"
+      - "third_party/licenses/**"
   pull_request:
+    paths-ignore:
+      - "README.md"
+      - "THIRD_PARTY_NOTICES.md"
+      - "third_party/licenses/**"
 
 permissions:
   contents: read
+
+concurrency:
+  group: fxforge-android-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   build:
@@ -16,7 +28,26 @@ jobs:
         with:
           distribution: temurin
           java-version: "17"
-      - uses: android-actions/setup-android@v3
+      - uses: android-actions/setup-android@v4
+      - name: Checkout pinned Android PRoot source
+        uses: actions/checkout@v4
+        with:
+          repository: berilevi/proot-static
+          ref: 6f8ebfd8e24887dfba64c3f2d7d5fe9dc059b60e
+          path: vendor/proot-static
+      - name: Install Android NDK for PRoot
+        run: sdkmanager "ndk;28.2.13676358"
+      - name: Build Android ARM64 PRoot
+        env:
+          PROOT_SOURCE_DIR: vendor/proot-static
+        run: bash scripts/build-proot-android-arm64.sh
+      - name: Upload Android PRoot binaries
+        uses: actions/upload-artifact@v4
+        with:
+          name: fxforge-proot-android-arm64
+          path: app/src/main/jniLibs/arm64-v8a/*
+          if-no-files-found: error
+          retention-days: 14
       - uses: gradle/actions/setup-gradle@v4
       - name: Install Android SDK packages
         run: sdkmanager "platforms;android-36" "build-tools;36.0.0"
@@ -24,3 +55,10 @@ jobs:
         run: ./gradlew testDebugUnitTest
       - name: Assemble debug APK
         run: ./gradlew assembleDebug
+      - name: Upload debug APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: fxforge-debug-apk
+          path: app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
+          retention-days: 14
