@@ -63,6 +63,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -75,7 +76,9 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.documentfile.provider.DocumentFile
@@ -100,12 +103,16 @@ class MainActivity : ComponentActivity() {
                     modifier = Modifier.fillMaxSize(),
                     color = MaterialTheme.colorScheme.background
                 ) {
-                    FxForgeApp(
-                        fxForgeApplication.shizukuStatusRepository,
-                        fxForgeApplication.shizukuUserServiceController,
-                        fxForgeApplication.linuxRuntimeManager,
-                        fxForgeApplication.androidMcpBridge
-                    )
+                    // FxForge's interface is currently English. Do not inherit RTL
+                    // alignment/order from an Arabic or other RTL system locale.
+                    CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
+                        FxForgeApp(
+                            fxForgeApplication.shizukuStatusRepository,
+                            fxForgeApplication.shizukuUserServiceController,
+                            fxForgeApplication.linuxRuntimeManager,
+                            fxForgeApplication.androidMcpBridge
+                        )
+                    }
                 }
             }
         }
