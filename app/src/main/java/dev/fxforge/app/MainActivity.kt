@@ -881,19 +881,23 @@ private fun OpenCodeScreen(
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val applicationScope = (context.applicationContext as FxForgeApplication).applicationScope
+    var workspacePickerError by remember { mutableStateOf<String?>(null) }
     val workspacePicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
         if (uri != null) {
+            workspacePickerError = null
             try {
                 context.contentResolver.takePersistableUriPermission(
                     uri,
                     Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
                 )
                 val root = DocumentFile.fromTreeUri(context, uri)
-                if (root != null) {
-                    scope.launch { runtimeManager.syncWorkspaceFromSaf(root) }
-                }
+                    ?: throw IOException("Android could not open the selected folder.")
+                scope.launch { runtimeManager.syncWorkspaceFromSaf(root) }
             } catch (exception: SecurityException) {
-                // The workspace state reports the access failure after the next sync attempt.
+                workspacePickerError = "Android did not grant persistent workspace access: " +
+                    (exception.message ?: "permission denied")
+            } catch (exception: IOException) {
+                workspacePickerError = exception.message ?: "Could not open the selected workspace."
             }
         }
     }
@@ -1049,6 +1053,7 @@ private fun OpenCodeScreen(
                 "Project workspace",
                 workspaceState.name ?: "No folder selected. OpenCode will start in an empty private workspace."
             )
+            workspacePickerError?.let { Text(it, color = MaterialTheme.colorScheme.error) }
             workspaceState.error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Button(
