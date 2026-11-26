@@ -1715,8 +1715,25 @@ private fun DeviceScreen(
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
         Text("Shizuku connection", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
-        InfoCard("Binder", if (status.binderAvailable) "Connected" else "Not connected")
+        InfoCard("Shizuku service", if (status.binderAvailable) "Running · Binder connected" else "Not running · start Shizuku first")
         InfoCard("FxForge permission", if (status.permissionGranted) "Granted" else "Not granted")
+        InfoCard(
+            "FxForge device service",
+            when {
+                userServiceStatus.connected -> "Connected · ready for approved device operations"
+                userServiceStatus.connecting -> "Connecting to Shizuku UserService…"
+                !status.binderAvailable -> "Waiting for Shizuku to start"
+                !status.permissionGranted -> "Waiting for FxForge permission"
+                else -> "Permission granted · connect the device service"
+            }
+        )
+        if (!status.binderAvailable) {
+            Text(
+                "Open the Shizuku app and start its service. You can use Wireless debugging pairing or a supported root method. Return here after Shizuku reports that it is running.",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
         InfoCard(
             "Reported privilege",
             when {
