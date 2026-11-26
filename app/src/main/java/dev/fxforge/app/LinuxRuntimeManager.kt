@@ -448,7 +448,7 @@ class LinuxRuntimeManager(context: Context) {
                         append(verification.error)
                     }
                     if (verification.output.isNotBlank()) {
-                        append("\\n")
+                        append("\n")
                         append(verification.output.takeLast(2000))
                     }
                 },
