@@ -5,6 +5,7 @@ import androidx.documentfile.provider.DocumentFile
 import java.io.File
 import java.io.FileOutputStream
 import java.io.IOException
+import java.security.MessageDigest
 import java.util.UUID
 
 data class WorkspaceCopyResult(
@@ -20,6 +21,408 @@ object ProjectWorkspaceSync {
     private const val MAX_TOTAL_BYTES = 2L * 1024L * 1024L * 1024L
     private const val MAX_FILE_BYTES = 512L * 1024L * 1024L
     private const val BUFFER_SIZE = 64 * 1024
+    private val ignoredSyncNames = setOf(".fxforge-tmp-", ".fxforge-backup-", ".fxforge-delete-")
+
+    data class SyncResult(
+        val copiedToPrivate: Int,
+        val copiedToStorage: Int,
+        val deletedFromPrivate: Int,
+        val deletedFromStorage: Int,
+        val conflicts: List<WorkspaceSyncConflict>,
+        val baselineAfter: Map<String, String>?
+    )
+
+    /**
+     * Reconciles the private Linux copy and the user-selected SAF tree against
+     * the last common snapshot. Conflicts are never resolved implicitly.
+     */
+    fun synchronize(
+        context: Context,
+        storageRoot: DocumentFile,
+        privateRoot: File,
+        baseline: Map<String, String>,
+        preferPrivateOnConflicts: Boolean? = null
+    ): SyncResult {
+        if (!storageRoot.isDirectory || !storageRoot.canRead() || !storageRoot.canWrite()) {
+            throw IOException("The selected project folder is no longer readable and writable.")
+        }
+        if (!privateRoot.isDirectory) {
+            throw IOException("The private Linux workspace is unavailable.")
+        }
+
+        val privateSnapshot = snapshotPrivate(privateRoot)
+        val storageSnapshot = snapshotSaf(context, storageRoot)
+        val plan = WorkspaceSyncPlanner.create(baseline, privateSnapshot, storageSnapshot)
+        if (plan.conflicts.isNotEmpty() && preferPrivateOnConflicts == null) {
+            return SyncResult(0, 0, 0, 0, plan.conflicts, null)
+        }
+
+        val actions = plan.changes.toMutableList()
+        plan.conflicts.forEach { conflict ->
+            val action = if (preferPrivateOnConflicts == true) {
+                if (conflict.privateHash == null) {
+                    WorkspaceSyncAction.DELETE_FROM_STORAGE
+                } else {
+                    WorkspaceSyncAction.COPY_TO_STORAGE
+                }
+            } else {
+                if (conflict.storageHash == null) {
+                    WorkspaceSyncAction.DELETE_FROM_PRIVATE
+                } else {
+                    WorkspaceSyncAction.COPY_TO_PRIVATE
+                }
+            }
+            actions += WorkspaceSyncChange(conflict.path, action)
+        }
+
+        var copiedToPrivate = 0
+        var copiedToStorage = 0
+        var deletedFromPrivate = 0
+        var deletedFromStorage = 0
+        for (change in actions) {
+            val expectedHash = when (change.action) {
+                WorkspaceSyncAction.COPY_TO_PRIVATE -> storageSnapshot[change.path]
+                WorkspaceSyncAction.COPY_TO_STORAGE -> privateSnapshot[change.path]
+                WorkspaceSyncAction.DELETE_FROM_PRIVATE,
+                WorkspaceSyncAction.DELETE_FROM_STORAGE -> baseline[change.path]
+            } ?: throw IOException("Workspace changed while preparing sync: " + change.path)
+
+            when (change.action) {
+                WorkspaceSyncAction.COPY_TO_PRIVATE -> {
+                    copySafFileToPrivate(context, storageRoot, privateRoot, change.path, expectedHash)
+                    copiedToPrivate++
+                }
+                WorkspaceSyncAction.COPY_TO_STORAGE -> {
+                    copyPrivateFileToSaf(context, privateRoot, storageRoot, change.path, expectedHash)
+                    copiedToStorage++
+                }
+                WorkspaceSyncAction.DELETE_FROM_PRIVATE -> {
+                    deletePrivateFile(privateRoot, change.path, expectedHash)
+                    deletedFromPrivate++
+                }
+                WorkspaceSyncAction.DELETE_FROM_STORAGE -> {
+                    deleteStorageFile(context, storageRoot, change.path, expectedHash)
+                    deletedFromStorage++
+                }
+            }
+        }
+
+        // Do not advance the common baseline unless both copies actually match.
+        // A file edited during sync is left as a detectable change for the next run.
+        val privateAfter = snapshotPrivate(privateRoot)
+        val storageAfter = snapshotSaf(context, storageRoot)
+        if (privateAfter != storageAfter) {
+            throw IOException("Workspace changed during synchronization. Nothing was marked as fully synced; run Sync again.")
+        }
+
+        return SyncResult(
+            copiedToPrivate = copiedToPrivate,
+            copiedToStorage = copiedToStorage,
+            deletedFromPrivate = deletedFromPrivate,
+            deletedFromStorage = deletedFromStorage,
+            conflicts = emptyList(),
+            baselineAfter = privateAfter
+        )
+    }
+
+    private fun snapshotPrivate(root: File): Map<String, String> {
+        if (!root.isDirectory) throw IOException("The private workspace directory is unavailable.")
+        val canonicalRoot = root.canonicalFile
+        val result = linkedMapOf<String, String>()
+        var totalBytes = 0L
+
+        fun visit(directory: File, relativeDirectory: String, depth: Int) {
+            if (depth > 32) throw IOException("Workspace folder nesting is too deep.")
+            val children = directory.listFiles()
+                ?: throw IOException("Could not read workspace directory: " + directory.name)
+            children.sortedBy { it.name }.forEach { child ->
+                val name = child.name
+                validatePathSegment(name)
+                if (child.isDirectory && name in ignoredDirectoryNames) return@forEach
+                if (child.isFile && name in ignoredFileNames) return@forEach
+                if (name.startsWith(".fxforge-tmp-") || name.startsWith(".fxforge-backup-") ||
+                    name.startsWith(".fxforge-delete-")) return@forEach
+                if (java.nio.file.Files.isSymbolicLink(child.toPath())) {
+                    throw IOException("Workspace contains a symbolic link that cannot be synchronized safely: " + name)
+                }
+                val canonical = child.canonicalFile
+                if (!canonical.path.startsWith(canonicalRoot.path + File.separator)) {
+                    throw IOException("Workspace contains an unsafe path: " + name)
+                }
+                val relative = if (relativeDirectory.isEmpty()) name else "$relativeDirectory/$name"
+                if (child.isDirectory) {
+                    visit(child, relative, depth + 1)
+                } else if (child.isFile) {
+                    if (child.length() > MAX_FILE_BYTES) {
+                        throw IOException("Workspace file exceeds the 512 MiB limit: " + relative)
+                    }
+                    totalBytes += child.length()
+                    if (totalBytes > MAX_TOTAL_BYTES) {
+                        throw IOException("Workspace exceeds FxForge's 2 GiB synchronization limit.")
+                    }
+                    result[relative] = hashFile(child)
+                    if (result.size > MAX_FILES) {
+                        throw IOException("Workspace contains more than 10,000 files.")
+                    }
+                }
+            }
+        }
+
+        visit(root, "", 0)
+        return result
+    }
+
+    private fun snapshotSaf(context: Context, root: DocumentFile): Map<String, String> {
+        val result = linkedMapOf<String, String>()
+        var totalBytes = 0L
+
+        fun visit(directory: DocumentFile, relativeDirectory: String, depth: Int) {
+            if (depth > 32) throw IOException("Workspace folder nesting is too deep.")
+            val children = try {
+                directory.listFiles().sortedBy { it.name ?: "" }
+            } catch (exception: SecurityException) {
+                throw IOException("Android denied access while scanning the workspace.", exception)
+            }
+            children.forEach { child ->
+                val name = child.name ?: throw IOException("A workspace item has no filename.")
+                validatePathSegment(name)
+                if (child.isDirectory && name in ignoredDirectoryNames) return@forEach
+                if (child.isFile && name in ignoredFileNames) return@forEach
+                if (name.startsWith(".fxforge-tmp-") || name.startsWith(".fxforge-backup-") ||
+                    name.startsWith(".fxforge-delete-")) return@forEach
+                val relative = if (relativeDirectory.isEmpty()) name else "$relativeDirectory/$name"
+                if (child.isDirectory) {
+                    visit(child, relative, depth + 1)
+                } else if (child.isFile) {
+                    if (!child.canRead()) throw IOException("Cannot read workspace file: " + relative)
+                    val digest = MessageDigest.getInstance("SHA-256")
+                    var fileBytes = 0L
+                    val input = context.contentResolver.openInputStream(child.uri)
+                        ?: throw IOException("Could not open workspace file: " + relative)
+                    input.use { stream ->
+                        val buffer = ByteArray(BUFFER_SIZE)
+                        while (true) {
+                            val count = stream.read(buffer)
+                            if (count < 0) break
+                            fileBytes += count
+                            totalBytes += count
+                            if (fileBytes > MAX_FILE_BYTES || totalBytes > MAX_TOTAL_BYTES) {
+                                throw IOException("Workspace exceeds FxForge's transfer-size limit.")
+                            }
+                            digest.update(buffer, 0, count)
+                        }
+                    }
+                    result[relative] = digest.digest().toHex()
+                    if (result.size > MAX_FILES) {
+                        throw IOException("Workspace contains more than 10,000 files.")
+                    }
+                }
+            }
+        }
+
+        visit(root, "", 0)
+        return result
+    }
+
+    private fun copySafFileToPrivate(
+        context: Context,
+        storageRoot: DocumentFile,
+        privateRoot: File,
+        relativePath: String,
+        expectedHash: String
+    ) {
+        val source = findSafFile(storageRoot, relativePath)
+            ?: throw IOException("Storage file disappeared during sync: " + relativePath)
+        if (!source.isFile || !source.canRead()) throw IOException("Cannot read storage file: " + relativePath)
+        val target = resolvePrivateFile(privateRoot, relativePath)
+        val parent = target.parentFile ?: throw IOException("Invalid workspace destination: " + relativePath)
+        if (!parent.exists() && !parent.mkdirs()) throw IOException("Could not create workspace directory: " + relativePath)
+        val staging = File.createTempFile(".fxforge-sync-", ".tmp", parent)
+        val digest = MessageDigest.getInstance("SHA-256")
+        try {
+            val input = context.contentResolver.openInputStream(source.uri)
+                ?: throw IOException("Could not open storage file: " + relativePath)
+            input.use { sourceStream ->
+                FileOutputStream(staging).use { output ->
+                    val buffer = ByteArray(BUFFER_SIZE)
+                    var countTotal = 0L
+                    while (true) {
+                        val count = sourceStream.read(buffer)
+                        if (count < 0) break
+                        countTotal += count
+                        if (countTotal > MAX_FILE_BYTES) throw IOException("Workspace file exceeds 512 MiB: " + relativePath)
+                        digest.update(buffer, 0, count)
+                        output.write(buffer, 0, count)
+                    }
+                }
+            }
+            if (digest.digest().toHex() != expectedHash) {
+                throw IOException("Storage file changed while it was being synchronized: " + relativePath)
+            }
+            replacePrivateFile(staging, target, relativePath)
+        } catch (exception: Exception) {
+            staging.delete()
+            throw exception
+        }
+    }
+
+    private fun copyPrivateFileToSaf(
+        context: Context,
+        privateRoot: File,
+        storageRoot: DocumentFile,
+        relativePath: String,
+        expectedHash: String
+    ) {
+        val source = resolvePrivateFile(privateRoot, relativePath)
+        if (!source.isFile || java.nio.file.Files.isSymbolicLink(source.toPath())) {
+            throw IOException("Private workspace file disappeared or became unsafe: " + relativePath)
+        }
+        val parent = ensureSafParent(storageRoot, relativePath)
+        val digest = MessageDigest.getInstance("SHA-256")
+        writeSafFileAtomically(
+            context = context,
+            destinationFolder = parent,
+            name = relativePath.substringAfterLast('/'),
+            mimeType = java.net.URLConnection.guessContentTypeFromName(relativePath)
+                ?: "application/octet-stream"
+        ) { output ->
+            source.inputStream().use { input ->
+                val buffer = ByteArray(BUFFER_SIZE)
+                var copied = 0L
+                while (true) {
+                    val count = input.read(buffer)
+                    if (count < 0) break
+                    copied += count
+                    if (copied > MAX_FILE_BYTES) throw IOException("Workspace file exceeds 512 MiB: " + relativePath)
+                    digest.update(buffer, 0, count)
+                    output.write(buffer, 0, count)
+                }
+            }
+            if (digest.digest().toHex() != expectedHash) {
+                throw IOException("Private workspace file changed while it was being synchronized: " + relativePath)
+            }
+        }
+    }
+
+    private fun deletePrivateFile(root: File, relativePath: String, expectedHash: String) {
+        val target = resolvePrivateFile(root, relativePath)
+        if (!target.exists()) return
+        if (!target.isFile || hashFile(target) != expectedHash) {
+            throw IOException("Private workspace file changed before deletion: " + relativePath)
+        }
+        if (!target.delete()) throw IOException("Could not remove deleted workspace file: " + relativePath)
+    }
+
+    private fun deleteStorageFile(
+        context: Context,
+        root: DocumentFile,
+        relativePath: String,
+        expectedHash: String
+    ) {
+        val target = findSafFile(root, relativePath) ?: return
+        if (!target.isFile || hashSafFile(context, target) != expectedHash) {
+            throw IOException("Storage file changed before deletion: " + relativePath)
+        }
+        if (!target.delete()) throw IOException("Could not remove deleted storage file: " + relativePath)
+    }
+
+    private fun hashSafFile(context: Context, file: DocumentFile): String {
+        val digest = MessageDigest.getInstance("SHA-256")
+        val input = context.contentResolver.openInputStream(file.uri)
+            ?: throw IOException("Could not open storage file for verification.")
+        input.use { stream ->
+            val buffer = ByteArray(BUFFER_SIZE)
+            while (true) {
+                val count = stream.read(buffer)
+                if (count < 0) break
+                digest.update(buffer, 0, count)
+            }
+        }
+        return digest.digest().toHex()
+    }
+
+    private fun hashFile(file: File): String {
+        val digest = MessageDigest.getInstance("SHA-256")
+        file.inputStream().use { input ->
+            val buffer = ByteArray(BUFFER_SIZE)
+            while (true) {
+                val count = input.read(buffer)
+                if (count < 0) break
+                digest.update(buffer, 0, count)
+            }
+        }
+        return digest.digest().toHex()
+    }
+
+    private fun findSafFile(root: DocumentFile, relativePath: String): DocumentFile? {
+        var current = root
+        val segments = safeSegments(relativePath)
+        segments.forEachIndexed { index, segment ->
+            current = current.findFile(segment) ?: return null
+            if (index < segments.lastIndex && !current.isDirectory) return null
+        }
+        return current.takeIf { it.isFile }
+    }
+
+    private fun ensureSafParent(root: DocumentFile, relativePath: String): DocumentFile {
+        var current = root
+        val segments = safeSegments(relativePath)
+        segments.dropLast(1).forEach { segment ->
+            val child = current.findFile(segment)
+            current = when {
+                child == null -> current.createDirectory(segment)
+                    ?: throw IOException("Could not create storage directory: " + segment)
+                child.isDirectory -> child
+                else -> throw IOException("A file blocks workspace directory creation: " + segment)
+            }
+        }
+        return current
+    }
+
+    private fun resolvePrivateFile(root: File, relativePath: String): File {
+        val segments = safeSegments(relativePath)
+        val rootCanonical = root.canonicalFile
+        val target = segments.fold(rootCanonical) { current, segment -> File(current, segment) }
+        if (!target.canonicalPath.startsWith(rootCanonical.path + File.separator)) {
+            throw IOException("Workspace path escapes the private root: " + relativePath)
+        }
+        return target
+    }
+
+    private fun replacePrivateFile(staging: File, target: File, relativePath: String) {
+        val backup = File(target.parentFile, ".fxforge-backup-" + UUID.randomUUID().toString())
+        var movedOldFile = false
+        if (target.exists()) {
+            if (!target.renameTo(backup)) {
+                throw IOException("Could not preserve the old workspace file before replacement: " + relativePath)
+            }
+            movedOldFile = true
+        }
+        if (!staging.renameTo(target)) {
+            if (movedOldFile && !backup.renameTo(target)) {
+                throw IOException("Could not replace or restore workspace file. Recovery copy: " + backup.absolutePath)
+            }
+            throw IOException("Could not activate synchronized workspace file: " + relativePath)
+        }
+        if (movedOldFile) backup.delete()
+    }
+
+    private fun safeSegments(relativePath: String): List<String> {
+        if (relativePath.isBlank() || relativePath.startsWith('/')) {
+            throw IOException("Workspace path must be a non-empty relative path.")
+        }
+        val segments = relativePath.split('/')
+        segments.forEach(::validatePathSegment)
+        return segments
+    }
+
+    private fun validatePathSegment(name: String) {
+        if (name.isBlank() || name == "." || name == ".." || name.contains('/') || name.contains('\\')) {
+            throw IOException("Workspace contains an unsafe path segment.")
+        }
+    }
+
+    private fun ByteArray.toHex(): String = joinToString("") { "%02x".format(it) }
 
     fun copyFromSaf(
         context: Context,
