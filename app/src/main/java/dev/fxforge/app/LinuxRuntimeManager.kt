@@ -924,12 +924,27 @@ class LinuxRuntimeManager(context: Context) {
                     return@withLock
                 }
 
-                // Before switching projects, reconcile the old private workspace
-                // with its original SAF tree. Never discard an unsynced project.
+                // Do not switch the project while a process is still using the
+                // current /workspace bind mount. Stop OpenCode and the Linux shell first.
+                if (openCodeProcess?.isAlive == true ||
+                    terminalProcess?.isAlive == true ||
+                    mutableOpenCodeState.value.starting ||
+                    mutableTerminalState.value.starting
+                ) {
+                    mutableWorkspaceState.value = mutableWorkspaceState.value.copy(
+                        syncing = false,
+                        error = "Stop OpenCode and the Linux terminal before switching the active workspace."
+                    )
+                    return@withLock
+                }
+
+                // Reconcile the old project before changing the active URI. Each
+                // project keeps its own private directory, so switching never
+                // replaces or discards another project's local files.
                 if (!activeUri.isNullOrBlank()) {
                     val previousRoot =
                         androidx.documentfile.provider.DocumentFile.fromTreeUri(appContext, Uri.parse(activeUri))
-                            ?: throw IOException("The previous workspace folder is no longer available. Its private files were preserved.")
+                            ?: throw IOException("The previous workspace folder is unavailable. Its private files were preserved.")
                     val previousSynced = synchronizeWorkspaceLocked(
                         previousRoot,
                         activeUri,
@@ -942,50 +957,80 @@ class LinuxRuntimeManager(context: Context) {
                         )
                         return@withLock
                     }
-                } else if (workspaceDirectory.listFiles()?.isNotEmpty() == true) {
+                } else if (legacyWorkspaceDirectory.listFiles()?.isNotEmpty() == true) {
                     throw IOException(
                         "FxForge found private workspace files without a linked storage folder. " +
                             "They were preserved; link or recover that workspace before switching."
                     )
                 }
 
-                // Import into a separate directory first. The current active
-                // workspace remains intact until the incoming project and its
-                // baseline have both been verified.
-                val parent = workspaceDirectory.parentFile
-                    ?: throw IOException("The private workspace has no parent directory.")
-                if (!parent.exists() && !parent.mkdirs()) {
+                val targetWorkspace = workspaceDirectoryFor(requestedUri)
+                val targetParent = targetWorkspace.parentFile
+                    ?: throw IOException("Could not locate the private workspace directory.")
+                if (!targetParent.exists() && !targetParent.mkdirs()) {
                     throw IOException("Could not create the private workspace directory.")
                 }
-                val stagingWorkspace = File(parent, ".incoming-" + UUID.randomUUID().toString())
-                ProjectWorkspaceSync.copyFromSaf(appContext, source, stagingWorkspace)
-                try {
-                    val initialSync = ProjectWorkspaceSync.synchronize(
+
+                if (targetWorkspace.isDirectory) {
+                    val restored = ProjectWorkspaceSync.synchronize(
                         appContext,
                         source,
-                        stagingWorkspace,
-                        emptyMap()
+                        targetWorkspace,
+                        loadWorkspaceBaseline(requestedUri)
                     )
-                    if (initialSync.conflicts.isNotEmpty()) {
-                        throw IOException("The selected folder changed during import. Retry the workspace selection.")
+                    if (restored.conflicts.isNotEmpty()) {
+                        mutableWorkspaceState.value = mutableWorkspaceState.value.copy(
+                            syncing = false,
+                            error = "This saved workspace has conflicts with its storage folder. Resolve them before opening it.",
+                            conflicts = restored.conflicts.map { it.path }
+                        )
+                        return@withLock
                     }
-                    val baseline = initialSync.baselineAfter
-                        ?: throw IOException("Could not verify the imported workspace.")
-                    saveWorkspaceBaseline(requestedUri, baseline)
-                    replaceActiveWorkspace(stagingWorkspace)
-                } catch (exception: Exception) {
-                    stagingWorkspace.deleteRecursively()
-                    throw exception
+                    saveWorkspaceBaseline(
+                        requestedUri,
+                        restored.baselineAfter
+                            ?: throw IOException("Could not verify the saved workspace.")
+                    )
+                } else {
+                    // Import into a separate project-specific directory. No
+                    // existing project's active or cached workspace is replaced.
+                    val stagingWorkspace = File(targetParent, ".incoming-" + UUID.randomUUID().toString())
+                    ProjectWorkspaceSync.copyFromSaf(appContext, source, stagingWorkspace)
+                    try {
+                        val initialSync = ProjectWorkspaceSync.synchronize(
+                            appContext,
+                            source,
+                            stagingWorkspace,
+                            emptyMap()
+                        )
+                        if (initialSync.conflicts.isNotEmpty()) {
+                            throw IOException("The selected folder changed during import. Retry the workspace selection.")
+                        }
+                        saveWorkspaceBaseline(
+                            requestedUri,
+                            initialSync.baselineAfter
+                                ?: throw IOException("Could not verify the imported workspace.")
+                        )
+                        if (!stagingWorkspace.renameTo(targetWorkspace)) {
+                            throw IOException("Could not activate the imported project workspace.")
+                        }
+                    } catch (exception: Exception) {
+                        stagingWorkspace.deleteRecursively()
+                        throw exception
+                    }
                 }
 
-                workspacePreferences.edit()
+                val saved = workspacePreferences.edit()
                     .putString("tree_uri", requestedUri)
                     .putString("tree_name", source.name ?: "Android project")
-                    .apply()
+                    .commit()
+                if (!saved) {
+                    throw IOException("Could not save the active workspace selection. The imported project files remain available.")
+                }
                 mutableWorkspaceState.value = WorkspaceState(
                     selected = true,
                     name = source.name ?: "Android project",
-                    lastSyncSummary = "Workspace imported and verified"
+                    lastSyncSummary = "Workspace ready · " + (source.name ?: "Android project")
                 )
             } catch (exception: Exception) {
                 mutableWorkspaceState.value = mutableWorkspaceState.value.copy(
@@ -1142,27 +1187,6 @@ class LinuxRuntimeManager(context: Context) {
             .digest(uri.toByteArray(Charsets.UTF_8))
             .joinToString("") { "%02x".format(it) }
         return File(appContext.filesDir, "workspaces/manifests/$key.json")
-    }
-
-    private fun replaceActiveWorkspace(staging: File) {
-        val backup = File(workspaceDirectory.parentFile, ".previous-workspace-" + UUID.randomUUID().toString())
-        var movedOld = false
-        if (workspaceDirectory.exists()) {
-            if (!workspaceDirectory.renameTo(backup)) {
-                throw IOException("Could not safely preserve the current private workspace.")
-            }
-            movedOld = true
-        }
-        if (!staging.renameTo(workspaceDirectory)) {
-            if (movedOld && !backup.renameTo(workspaceDirectory)) {
-                throw IOException("Could not activate the new workspace or restore the previous one. Recovery copy: " + backup.absolutePath)
-            }
-            throw IOException("Could not activate the imported workspace.")
-        }
-        if (movedOld && !backup.deleteRecursively()) {
-            // The old copy was already reconciled with its original SAF folder.
-            // A leftover recovery directory is safe and can be cleaned later.
-        }
     }
 
     suspend fun buildProject(projectRoot: androidx.documentfile.provider.DocumentFile): AndroidBuildResult =
