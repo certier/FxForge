@@ -119,7 +119,15 @@ internal object WorkspaceSyncPlanner {
 
         // Create directories before their children. Delete them only after all
         // contained files have been reconciled, deepest directory first.
-        val orderedChanges = changes.sortedWith(
+        return WorkspaceSyncPlan(
+            changes = orderChanges(changes),
+            conflicts = conflicts,
+            baselineAfter = if (conflicts.isEmpty()) mergedBaseline else null
+        )
+    }
+
+    internal fun orderChanges(changes: List<WorkspaceSyncChange>): List<WorkspaceSyncChange> =
+        changes.sortedWith(
             compareBy<WorkspaceSyncChange> { actionOrder(it.action) }
                 .thenBy {
                     when (it.action) {
@@ -132,13 +140,6 @@ internal object WorkspaceSyncPlanner {
                 }
                 .thenBy { it.path }
         )
-
-        return WorkspaceSyncPlan(
-            changes = orderedChanges,
-            conflicts = conflicts,
-            baselineAfter = if (conflicts.isEmpty()) mergedBaseline else null
-        )
-    }
 
     private fun actionOrder(action: WorkspaceSyncAction): Int = when (action) {
         WorkspaceSyncAction.CREATE_DIRECTORY_PRIVATE,
