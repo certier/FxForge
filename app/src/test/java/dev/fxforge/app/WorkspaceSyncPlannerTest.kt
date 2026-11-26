@@ -155,6 +155,90 @@ class WorkspaceSyncPlannerTest {
         )
     }
 
+    @Test
+    fun createsEmptyFolderOnOtherSide() {
+        val plan = WorkspaceSyncPlanner.create(
+            baseline = emptyMap(),
+            privateFiles = emptyMap(),
+            storageFiles = mapOf("assets/empty" to WORKSPACE_DIRECTORY_HASH)
+        )
+        assertEquals(
+            listOf(WorkspaceSyncChange("assets/empty", WorkspaceSyncAction.CREATE_DIRECTORY_PRIVATE)),
+            plan.changes
+        )
+        assertEquals(WORKSPACE_DIRECTORY_HASH, plan.baselineAfter?.get("assets/empty"))
+    }
+
+    @Test
+    fun propagatesEmptyFolderDeletionToUnchangedSide() {
+        val plan = WorkspaceSyncPlanner.create(
+            baseline = mapOf("assets/empty" to WORKSPACE_DIRECTORY_HASH),
+            privateFiles = emptyMap(),
+            storageFiles = mapOf("assets/empty" to WORKSPACE_DIRECTORY_HASH)
+        )
+        assertEquals(
+            listOf(WorkspaceSyncChange("assets/empty", WorkspaceSyncAction.DELETE_DIRECTORY_STORAGE)),
+            plan.changes
+        )
+        assertEquals(emptyMap<String, String>(), plan.baselineAfter)
+    }
+
+    @Test
+    fun createsParentFoldersBeforeFilesAndDeletesFoldersAfterFiles() {
+        val createPlan = WorkspaceSyncPlanner.create(
+            baseline = emptyMap(),
+            privateFiles = emptyMap(),
+            storageFiles = mapOf(
+                "app" to WORKSPACE_DIRECTORY_HASH,
+                "app/src" to WORKSPACE_DIRECTORY_HASH,
+                "app/src/Main.kt" to "new-file"
+            )
+        )
+        assertEquals(
+            listOf(
+                WorkspaceSyncChange("app", WorkspaceSyncAction.CREATE_DIRECTORY_PRIVATE),
+                WorkspaceSyncChange("app/src", WorkspaceSyncAction.CREATE_DIRECTORY_PRIVATE),
+                WorkspaceSyncChange("app/src/Main.kt", WorkspaceSyncAction.COPY_TO_PRIVATE)
+            ),
+            createPlan.changes
+        )
+
+        val deletePlan = WorkspaceSyncPlanner.create(
+            baseline = mapOf(
+                "app" to WORKSPACE_DIRECTORY_HASH,
+                "app/src" to WORKSPACE_DIRECTORY_HASH,
+                "app/src/Main.kt" to "old-file"
+            ),
+            privateFiles = emptyMap(),
+            storageFiles = mapOf(
+                "app" to WORKSPACE_DIRECTORY_HASH,
+                "app/src" to WORKSPACE_DIRECTORY_HASH,
+                "app/src/Main.kt" to "old-file"
+            )
+        )
+        assertEquals(
+            listOf(
+                WorkspaceSyncChange("app/src/Main.kt", WorkspaceSyncAction.DELETE_FROM_STORAGE),
+                WorkspaceSyncChange("app/src", WorkspaceSyncAction.DELETE_DIRECTORY_STORAGE),
+                WorkspaceSyncChange("app", WorkspaceSyncAction.DELETE_DIRECTORY_STORAGE)
+            ),
+            deletePlan.changes
+        )
+    }
+
+    @Test
+    fun fileDirectoryCollisionRequiresExplicitConflictResolution() {
+        val plan = WorkspaceSyncPlanner.create(
+            baseline = mapOf("assets" to "old-file"),
+            privateFiles = mapOf("assets" to "new-file"),
+            storageFiles = mapOf("assets" to WORKSPACE_DIRECTORY_HASH)
+        )
+        assertEquals(emptyList<WorkspaceSyncChange>(), plan.changes)
+        assertEquals(1, plan.conflicts.size)
+        assertEquals("assets", plan.conflicts.single().path)
+        assertNull(plan.baselineAfter)
+    }
+
     @Test(expected = IllegalArgumentException::class)
     fun rejectsParentTraversalPaths() {
         WorkspaceSyncPlanner.create(
