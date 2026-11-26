@@ -226,8 +226,7 @@ object ProjectWorkspaceSync {
                             ". The original file was left unchanged."
                     )
                 }
-                backup = destinationFolder.findFile(backupName)
-                    ?: throw IOException("The previous file was renamed but its recovery copy could not be located: " + backupName)
+                backup = destinationFolder.findFile(backupName) ?: existing
             }
 
             if (!staged.renameTo(name)) {
@@ -242,13 +241,14 @@ object ProjectWorkspaceSync {
                 throw IOException("The storage provider could not activate the new file: " + name)
             }
 
-            backup?.delete()
+            backup?.let(::deleteSafTree)
             return destinationFolder.findFile(name)
                 ?: throw IOException("The storage provider did not return the completed file: " + name)
         } catch (exception: Exception) {
             staged.delete()
-            if (backup != null && destinationFolder.findFile(name) == null) {
-                if (!backup.renameTo(name)) {
+            val recoveryDocument = backup ?: destinationFolder.findFile(backupName)
+            if (recoveryDocument != null && destinationFolder.findFile(name) == null) {
+                if (!recoveryDocument.renameTo(name)) {
                     throw IOException(
                         "Workspace sync failed and the previous file remains available as " + backupName,
                         exception
