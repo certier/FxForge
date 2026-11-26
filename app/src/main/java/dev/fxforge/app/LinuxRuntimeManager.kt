@@ -104,8 +104,19 @@ private object DebianRootfs {
 class LinuxRuntimeManager(context: Context) {
     private val appContext = context.applicationContext
     private val runtimeDirectory = File(appContext.filesDir, "linux")
-    private val workspaceDirectory = File(appContext.filesDir, "workspaces/active")
     private val workspacePreferences = appContext.getSharedPreferences("linux_workspace", Context.MODE_PRIVATE)
+    private val legacyWorkspaceDirectory = File(appContext.filesDir, "workspaces/active")
+    private val workspaceDirectory: File
+        get() {
+            val uri = workspacePreferences.getString("tree_uri", null)
+            if (uri.isNullOrBlank()) return legacyWorkspaceDirectory
+            val projectDirectory = workspaceDirectoryFor(uri)
+            return if (!projectDirectory.exists() && legacyWorkspaceDirectory.exists()) {
+                legacyWorkspaceDirectory
+            } else {
+                projectDirectory
+            }
+        }
     private val mutableWorkspaceState = MutableStateFlow(
         WorkspaceState(
             selected = workspacePreferences.getString("tree_uri", null) != null,
@@ -148,6 +159,19 @@ class LinuxRuntimeManager(context: Context) {
         )
     )
     val state: StateFlow<LinuxRuntimeState> = mutableState.asStateFlow()
+
+    init {
+        val uri = workspacePreferences.getString("tree_uri", null)
+        if (!uri.isNullOrBlank() && legacyWorkspaceDirectory.exists()) {
+            val projectDirectory = workspaceDirectoryFor(uri)
+            if (!projectDirectory.exists()) {
+                projectDirectory.parentFile?.mkdirs()
+                // One-time migration: keep the user's existing private files
+                // when moving from the older shared "active" workspace layout.
+                legacyWorkspaceDirectory.renameTo(projectDirectory)
+            }
+        }
+    }
 
     fun isProotAvailable(): Boolean =
         Build.SUPPORTED_ABIS.any { it == "arm64-v8a" } && ProotBinaryRuntime.isBundled(appContext)
@@ -1104,6 +1128,13 @@ class LinuxRuntimeManager(context: Context) {
             if (!destination.exists() && backup.exists()) backup.renameTo(destination)
             throw exception
         }
+    }
+
+    private fun workspaceDirectoryFor(uri: String): File {
+        val key = MessageDigest.getInstance("SHA-256")
+            .digest(uri.toByteArray(Charsets.UTF_8))
+            .joinToString("") { "%02x".format(it) }
+        return File(appContext.filesDir, "workspaces/projects/$key")
     }
 
     private fun workspaceBaselineFile(uri: String): File {
