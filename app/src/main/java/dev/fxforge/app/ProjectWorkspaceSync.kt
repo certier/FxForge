@@ -28,15 +28,57 @@ object ProjectWorkspaceSync {
         if (!source.isDirectory || !source.canRead()) {
             throw IOException("The selected project folder cannot be read.")
         }
-        if (destination.exists() && !destination.deleteRecursively()) {
-            throw IOException("Could not clear the previous build workspace.")
+        val parent = destination.absoluteFile.parentFile
+            ?: throw IOException("The private workspace has no parent directory.")
+        if (!parent.exists() && !parent.mkdirs()) {
+            throw IOException("Could not create the private workspace parent directory.")
         }
-        if (!destination.mkdirs()) {
-            throw IOException("Could not create the private build workspace.")
+
+        // Never destroy the active workspace before the replacement has been
+        // copied and validated. SAF providers can fail halfway through a read;
+        // staging keeps the user's previous files intact in that case.
+        val staging = File.createTempFile(".${destination.name}.", ".staging", parent)
+        if (!staging.delete() || !staging.mkdir()) {
+            throw IOException("Could not prepare a staging directory for the project.")
         }
-        val counter = CopyCounter()
-        copyDirectory(context, source, destination, counter, 0)
-        return WorkspaceCopyResult(destination, counter.files, counter.bytes)
+        val backup = File.createTempFile(".${destination.name}.", ".backup", parent)
+        if (!backup.delete()) {
+            staging.deleteRecursively()
+            throw IOException("Could not prepare a workspace recovery directory.")
+        }
+
+        var previousWorkspaceMoved = false
+        try {
+            val counter = CopyCounter()
+            copyDirectory(context, source, staging, counter, 0)
+
+            if (destination.exists()) {
+                if (!destination.renameTo(backup)) {
+                    throw IOException("Could not safely preserve the previous workspace.")
+                }
+                previousWorkspaceMoved = true
+            }
+            if (!staging.renameTo(destination)) {
+                if (previousWorkspaceMoved && !backup.renameTo(destination)) {
+                    throw IOException("Could not activate the new workspace or restore the previous workspace. Recovery copy: ${backup.absolutePath}")
+                }
+                previousWorkspaceMoved = false
+                throw IOException("Could not activate the copied project workspace.")
+            }
+            if (previousWorkspaceMoved) backup.deleteRecursively()
+            return WorkspaceCopyResult(destination, counter.files, counter.bytes)
+        } catch (exception: Exception) {
+            staging.deleteRecursively()
+            if (previousWorkspaceMoved && !destination.exists() && backup.exists()) {
+                if (!backup.renameTo(destination)) {
+                    throw IOException(
+                        "Workspace replacement failed and automatic recovery could not restore the previous files. Recovery copy: ${backup.absolutePath}",
+                        exception
+                    )
+                }
+            }
+            throw exception
+        }
     }
 
     fun copyArtifactToSaf(
