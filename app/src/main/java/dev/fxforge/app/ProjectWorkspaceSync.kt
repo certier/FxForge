@@ -80,12 +80,13 @@ object ProjectWorkspaceSync {
         var deletedFromPrivate = 0
         var deletedFromStorage = 0
         for (change in actions) {
-            val expectedHash = when (change.action) {
-                WorkspaceSyncAction.COPY_TO_PRIVATE -> storageSnapshot[change.path]
-                WorkspaceSyncAction.COPY_TO_STORAGE -> privateSnapshot[change.path]
-                WorkspaceSyncAction.DELETE_FROM_PRIVATE,
-                WorkspaceSyncAction.DELETE_FROM_STORAGE -> baseline[change.path]
-            } ?: throw IOException("Workspace changed while preparing sync: " + change.path)
+            val expectedHash = expectedHashForAction(
+                action = change.action,
+                path = change.path,
+                baseline = baseline,
+                privateFiles = privateSnapshot,
+                storageFiles = storageSnapshot
+            ) ?: throw IOException("Workspace changed while preparing sync: " + change.path)
 
             when (change.action) {
                 WorkspaceSyncAction.COPY_TO_PRIVATE -> {
@@ -126,6 +127,21 @@ object ProjectWorkspaceSync {
     }
 
     internal fun snapshotPrivateFiles(root: File): Map<String, String> = snapshotPrivate(root)
+
+    internal fun expectedHashForAction(
+        action: WorkspaceSyncAction,
+        path: String,
+        baseline: Map<String, String>,
+        privateFiles: Map<String, String>,
+        storageFiles: Map<String, String>
+    ): String? = when (action) {
+        WorkspaceSyncAction.COPY_TO_PRIVATE -> storageFiles[path]
+        WorkspaceSyncAction.COPY_TO_STORAGE -> privateFiles[path]
+        // Delete operations verify the current file on the side being removed,
+        // not the old common baseline. This also handles explicit conflict choices.
+        WorkspaceSyncAction.DELETE_FROM_PRIVATE -> privateFiles[path]
+        WorkspaceSyncAction.DELETE_FROM_STORAGE -> storageFiles[path]
+    }
 
     private fun snapshotPrivate(root: File): Map<String, String> {
         if (!root.isDirectory) throw IOException("The private workspace directory is unavailable.")
