@@ -1055,6 +1055,11 @@ private fun OpenCodeScreen(
             )
             workspacePickerError?.let { Text(it, color = MaterialTheme.colorScheme.error) }
             workspaceState.error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+            WorkspaceSyncFeedback(
+                state = workspaceState,
+                onKeepPrivate = { scope.launch { runtimeManager.syncWorkspaceToSaf(preferPrivateOnConflicts = true) } },
+                onKeepStorage = { scope.launch { runtimeManager.syncWorkspaceToSaf(preferPrivateOnConflicts = false) } }
+            )
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Button(
                     enabled = !workspaceState.syncing && !state.starting,
@@ -1066,7 +1071,7 @@ private fun OpenCodeScreen(
                     enabled = workspaceState.selected && !workspaceState.syncing,
                     onClick = { scope.launch { runtimeManager.syncWorkspaceToSaf() } }
                 ) {
-                    Text(if (workspaceState.syncing) "Syncing…" else "Sync changes")
+                    Text(if (workspaceState.syncing) "Syncing…" else "Sync both copies")
                 }
             }
             if (workspaceState.syncing) CircularProgressIndicator()
@@ -1520,6 +1525,11 @@ private fun ProjectsScreen(
                 workspaceState.error?.let { message ->
                     Text(message, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
                 }
+                WorkspaceSyncFeedback(
+                    state = workspaceState,
+                    onKeepPrivate = { scope.launch { linuxRuntimeManager.syncWorkspaceToSaf(preferPrivateOnConflicts = true) } },
+                    onKeepStorage = { scope.launch { linuxRuntimeManager.syncWorkspaceToSaf(preferPrivateOnConflicts = false) } }
+                )
             }
         }
         if (currentDirectory != null) {
@@ -2190,6 +2200,62 @@ private fun EnvironmentScreen(padding: PaddingValues, linuxRuntimeManager: Linux
                 )
                 if (result.output.isNotBlank() && result.error != null) {
                     Text(result.output, style = MaterialTheme.typography.bodySmall)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun WorkspaceSyncFeedback(
+    state: WorkspaceState,
+    onKeepPrivate: () -> Unit,
+    onKeepStorage: () -> Unit
+) {
+    state.lastSyncSummary?.let {
+        Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    }
+    if (state.conflicts.isNotEmpty()) {
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer)
+        ) {
+            Column(
+                Modifier.fillMaxWidth().padding(14.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Text(
+                    "Workspace sync needs a decision",
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.SemiBold,
+                    color = MaterialTheme.colorScheme.onErrorContainer
+                )
+                Text(
+                    "These files changed in both places. FxForge has not overwritten either copy.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onErrorContainer
+                )
+                state.conflicts.take(8).forEach { path ->
+                    Text(
+                        path,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onErrorContainer
+                    )
+                }
+                if (state.conflicts.size > 8) {
+                    Text(
+                        "And ${state.conflicts.size - 8} more…",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onErrorContainer
+                    )
+                }
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Button(onClick = onKeepPrivate) {
+                        Text("Keep FxForge copy")
+                    }
+                    OutlinedButton(onClick = onKeepStorage) {
+                        Text("Keep folder copy")
+                    }
                 }
             }
         }
