@@ -478,6 +478,7 @@ class LinuxRuntimeManager(context: Context) {
     }
 
     suspend fun startOpenCode() = withContext(Dispatchers.IO) {
+        workspaceMutex.withLock {
         if (!openCodeBinary.isFile) {
             mutableOpenCodeState.value = OpenCodeState(
                 installed = false,
@@ -609,6 +610,7 @@ class LinuxRuntimeManager(context: Context) {
                 output = if (log.isFile) log.readText().takeLast(4000) else null
             )
         }
+        }
     }
 
     suspend fun registerAndroidMcp(info: AndroidMcpBridgeInfo): String? = withContext(Dispatchers.IO) {
@@ -693,6 +695,7 @@ class LinuxRuntimeManager(context: Context) {
     }
 
     suspend fun stopOpenCode() = withContext(Dispatchers.IO) {
+        workspaceMutex.withLock {
         val process = openCodeProcess
         openCodeProcess = null
         if (process != null && process.isAlive) {
@@ -702,6 +705,7 @@ class LinuxRuntimeManager(context: Context) {
         openCodeProcess = null
         openCodePassword = null
         mutableOpenCodeState.value = OpenCodeState(installed = openCodeBinary.isFile)
+        }
     }
 
     fun openCodeCredentials(): Pair<String, String>? =
@@ -763,7 +767,8 @@ class LinuxRuntimeManager(context: Context) {
     }
 
     suspend fun startTerminalSession() = withContext(Dispatchers.IO) {
-        terminalMutex.withLock {
+        workspaceMutex.withLock {
+            terminalMutex.withLock {
             if (terminalProcess?.isAlive == true) {
                 mutableTerminalState.value = LinuxTerminalState(running = true)
                 return@withLock
@@ -827,6 +832,7 @@ class LinuxRuntimeManager(context: Context) {
                 mutableTerminalState.value = LinuxTerminalState(
                     error = "Could not start Debian shell: " + (exception.message ?: "process error")
                 )
+            }
             }
         }
     }
@@ -909,7 +915,8 @@ class LinuxRuntimeManager(context: Context) {
         }
 
     suspend fun stopTerminalSession() = withContext(Dispatchers.IO) {
-        terminalMutex.withLock {
+        workspaceMutex.withLock {
+            terminalMutex.withLock {
             val process = terminalProcess
             terminalProcess = null
             terminalReader = null
@@ -919,6 +926,7 @@ class LinuxRuntimeManager(context: Context) {
                 if (!process.waitFor(2, TimeUnit.SECONDS)) process.destroyForcibly()
             }
             mutableTerminalState.value = LinuxTerminalState()
+            }
         }
     }
 
