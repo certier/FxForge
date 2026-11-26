@@ -23,7 +23,7 @@ object ProjectWorkspaceSync {
     private const val BUFFER_SIZE = 64 * 1024
     private val ignoredSyncNames = setOf(".fxforge-tmp-", ".fxforge-backup-", ".fxforge-delete-")
 
-    data class SyncResult(
+    internal data class SyncResult(
         val copiedToPrivate: Int,
         val copiedToStorage: Int,
         val deletedFromPrivate: Int,
@@ -36,7 +36,7 @@ object ProjectWorkspaceSync {
      * Reconciles the private Linux copy and the user-selected SAF tree against
      * the last common snapshot. Conflicts are never resolved implicitly.
      */
-    fun synchronize(
+    internal fun synchronize(
         context: Context,
         storageRoot: DocumentFile,
         privateRoot: File,
