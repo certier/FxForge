@@ -409,8 +409,31 @@ class LinuxRuntimeManager(context: Context) {
 
     suspend fun startOpenCode() = withContext(Dispatchers.IO) {
         if (!openCodeBinary.isFile) {
-            mutableOpenCodeState.value = mutableOpenCodeState.value.copy(
-                error = "Install OpenCode before starting its server."
+            mutableOpenCodeState.value = OpenCodeState(
+                installed = false,
+                error = "OpenCode is not installed. Install it before starting the server."
+            )
+            return@withContext
+        }
+        val verification = runCommand(
+            "test -x /root/.opencode/bin/opencode && /root/.opencode/bin/opencode --version",
+            timeoutSeconds = 60
+        )
+        if (verification.exitCode != 0) {
+            mutableOpenCodeState.value = OpenCodeState(
+                installed = false,
+                error = buildString {
+                    append("OpenCode is present but failed its Debian execution check.")
+                    if (verification.error != null) {
+                        append("\n")
+                        append(verification.error)
+                    }
+                    if (verification.output.isNotBlank()) {
+                        append("\\n")
+                        append(verification.output.takeLast(2000))
+                    }
+                },
+                output = verification.output
             )
             return@withContext
         }
