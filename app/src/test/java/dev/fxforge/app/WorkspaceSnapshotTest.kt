@@ -48,6 +48,27 @@ class WorkspaceSnapshotTest {
     }
 
     @Test
+    fun workspaceManifestIncludesEmptyAndNonEmptyFolders() {
+        val root = Files.createTempDirectory("fxforge-workspace-test").toFile()
+        try {
+            val workspace = File(root, "workspace").apply { mkdirs() }
+            File(workspace, "empty-folder").mkdirs()
+            File(workspace, "src/nested").mkdirs()
+            File(workspace, "src/nested/Main.kt").writeText("fun main() = Unit")
+
+            val manifest = ProjectWorkspaceSync.snapshotPrivateFiles(workspace)
+
+            assertEquals(WORKSPACE_DIRECTORY_HASH, manifest["empty-folder"])
+            assertEquals(WORKSPACE_DIRECTORY_HASH, manifest["src"])
+            assertEquals(WORKSPACE_DIRECTORY_HASH, manifest["src/nested"])
+            assertTrue(manifest["src/nested/Main.kt"]?.matches(Regex("[0-9a-f]{64}")) == true)
+            assertEquals(4, manifest.size)
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
+    @Test
     fun refusesToOverwriteAnExistingBuildDirectory() {
         val root = Files.createTempDirectory("fxforge-workspace-test").toFile()
         try {
