@@ -1038,22 +1038,13 @@ class LinuxRuntimeManager(context: Context) {
                     // Import into a separate project-specific directory. No
                     // existing project's active or cached workspace is replaced.
                     val stagingWorkspace = File(targetParent, ".incoming-" + UUID.randomUUID().toString())
-                    ProjectWorkspaceSync.copyFromSaf(appContext, source, stagingWorkspace)
+                    ProjectWorkspaceSync.copyFromSafVerified(appContext, source, stagingWorkspace)
                     try {
-                        val initialSync = ProjectWorkspaceSync.synchronize(
-                            appContext,
-                            source,
-                            stagingWorkspace,
-                            emptyMap()
-                        )
-                        if (initialSync.conflicts.isNotEmpty()) {
-                            throw IOException("The selected folder changed during import. Retry the workspace selection.")
-                        }
-                        saveWorkspaceBaseline(
-                            requestedUri,
-                            initialSync.baselineAfter
-                                ?: throw IOException("Could not verify the imported workspace.")
-                        )
+                        // The verified copy itself is the common baseline. Any
+                        // SAF change after this point remains a detectable one-sided
+                        // change on the next normal two-way sync.
+                        val importedBaseline = ProjectWorkspaceSync.snapshotPrivateFiles(stagingWorkspace)
+                        saveWorkspaceBaseline(requestedUri, importedBaseline)
                         if (!stagingWorkspace.renameTo(targetWorkspace)) {
                             throw IOException("Could not activate the imported project workspace.")
                         }
@@ -1302,7 +1293,7 @@ class LinuxRuntimeManager(context: Context) {
                     if (isActiveWorkspace) {
                         ProjectWorkspaceSync.copyPrivateWorkspaceSnapshot(workspaceDirectory, workspace)
                     } else {
-                        ProjectWorkspaceSync.copyFromSaf(appContext, projectRoot, workspace)
+                        ProjectWorkspaceSync.copyFromSafVerified(appContext, projectRoot, workspace)
                     }
                     File(workspace, "local.properties").writeText("sdk.dir=/opt/android-sdk\n")
                     File(rootfsDirectory, "workspace").mkdirs()
