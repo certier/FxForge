@@ -649,6 +649,21 @@ private fun HomeScreen(
                         complete = workspaceState.selected,
                         active = openCodeState.installed && !workspaceState.selected
                     )
+                    Text("Optional device integration", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+                    SetupStepRow(
+                        number = "↗",
+                        title = "Shizuku device access",
+                        detail = when {
+                            status.permissionGranted -> "Connected · FxForge permission granted"
+                            status.binderAvailable -> "Service detected · permission still needed"
+                            else -> "Optional · start Shizuku to enable Android device tools"
+                        },
+                        complete = status.permissionGranted,
+                        active = false
+                    )
+                    TextButton(onClick = { onNavigate(Destination.DEVICE) }) {
+                        Text("Configure device integration")
+                    }
                     AnimatedVisibility(visible = readyCount == 4, enter = fadeIn() + slideInVertically(), exit = fadeOut()) {
                         Text(
                             "Setup complete. Create a project or open your workspace to start building.",
