@@ -37,6 +37,7 @@ import java.util.concurrent.ExecutionException
 import java.util.concurrent.FutureTask
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.TimeoutException
+import java.util.UUID
 
 data class LinuxRuntimeState(
     val installed: Boolean = false,
@@ -111,6 +112,7 @@ class LinuxRuntimeManager(context: Context) {
     )
     val workspaceState: StateFlow<WorkspaceState> = mutableWorkspaceState.asStateFlow()
     private val terminalMutex = Mutex()
+    private val workspaceMutex = Mutex()
     private val mutableTerminalState = MutableStateFlow(LinuxTerminalState())
     val terminalState: StateFlow<LinuxTerminalState> = mutableTerminalState.asStateFlow()
     @Volatile private var terminalProcess: Process? = null
@@ -873,108 +875,144 @@ class LinuxRuntimeManager(context: Context) {
 
     suspend fun syncWorkspaceFromSaf(source: androidx.documentfile.provider.DocumentFile) =
         withContext(Dispatchers.IO) {
-            if (!source.isDirectory || !source.canRead()) {
-                mutableWorkspaceState.value = mutableWorkspaceState.value.copy(
-                    error = "The selected workspace folder cannot be read."
-                )
-                return@withContext
-            }
-            mutableWorkspaceState.value = mutableWorkspaceState.value.copy(syncing = true, error = null)
-            try {
-                ProjectWorkspaceSync.copyFromSaf(appContext, source, workspaceDirectory)
-                workspacePreferences.edit()
-                    .putString("tree_uri", source.uri.toString())
-                    .putString("tree_name", source.name ?: "Android project")
-                    .apply()
-                mutableWorkspaceState.value = WorkspaceState(
-                    selected = true,
-                    name = source.name ?: "Android project"
-                )
-            } catch (exception: Exception) {
-                mutableWorkspaceState.value = mutableWorkspaceState.value.copy(
-                    syncing = false,
-                    error = exception.message ?: "Could not copy the project into the Linux workspace."
-                )
+            workspaceMutex.withLock {
+                if (!source.isDirectory || !source.canRead()) {
+                    mutableWorkspaceState.value = mutableWorkspaceState.value.copy(
+                        error = "The selected workspace folder cannot be read."
+                    )
+                    return@withLock
+                }
+                mutableWorkspaceState.value = mutableWorkspaceState.value.copy(syncing = true, error = null)
+                try {
+                    ProjectWorkspaceSync.copyFromSaf(appContext, source, workspaceDirectory)
+                    workspacePreferences.edit()
+                        .putString("tree_uri", source.uri.toString())
+                        .putString("tree_name", source.name ?: "Android project")
+                        .apply()
+                    mutableWorkspaceState.value = WorkspaceState(
+                        selected = true,
+                        name = source.name ?: "Android project"
+                    )
+                } catch (exception: Exception) {
+                    mutableWorkspaceState.value = mutableWorkspaceState.value.copy(
+                        syncing = false,
+                        error = exception.message ?: "Could not copy the project into the Linux workspace."
+                    )
+                }
             }
         }
 
     suspend fun syncWorkspaceToSaf() = withContext(Dispatchers.IO) {
-        val uri = workspacePreferences.getString("tree_uri", null)
-        if (uri.isNullOrBlank()) {
-            mutableWorkspaceState.value = mutableWorkspaceState.value.copy(
-                error = "Choose a project folder before syncing changes."
-            )
-            return@withContext
-        }
-        mutableWorkspaceState.value = mutableWorkspaceState.value.copy(syncing = true, error = null)
-        try {
-            val destination = androidx.documentfile.provider.DocumentFile.fromTreeUri(appContext, Uri.parse(uri))
-                ?: throw IOException("The saved workspace folder is no longer available.")
-            ProjectWorkspaceSync.copyToSaf(appContext, workspaceDirectory, destination)
-            mutableWorkspaceState.value = mutableWorkspaceState.value.copy(syncing = false, error = null)
-        } catch (exception: Exception) {
-            mutableWorkspaceState.value = mutableWorkspaceState.value.copy(
-                syncing = false,
-                error = exception.message ?: "Could not sync project changes back to Android storage."
-            )
+        workspaceMutex.withLock {
+            val uri = workspacePreferences.getString("tree_uri", null)
+            if (uri.isNullOrBlank()) {
+                mutableWorkspaceState.value = mutableWorkspaceState.value.copy(
+                    error = "Choose a project folder before syncing changes."
+                )
+                return@withLock
+            }
+            mutableWorkspaceState.value = mutableWorkspaceState.value.copy(syncing = true, error = null)
+            try {
+                val destination = androidx.documentfile.provider.DocumentFile.fromTreeUri(appContext, Uri.parse(uri))
+                    ?: throw IOException("The saved workspace folder is no longer available.")
+                ProjectWorkspaceSync.copyToSaf(appContext, workspaceDirectory, destination)
+                mutableWorkspaceState.value = mutableWorkspaceState.value.copy(syncing = false, error = null)
+            } catch (exception: Exception) {
+                mutableWorkspaceState.value = mutableWorkspaceState.value.copy(
+                    syncing = false,
+                    error = exception.message ?: "Could not sync project changes back to Android storage."
+                )
+            }
         }
     }
 
     suspend fun buildProject(projectRoot: androidx.documentfile.provider.DocumentFile): AndroidBuildResult =
         withContext(Dispatchers.IO) {
-            if (!androidSdkMarker.isFile) {
-                return@withContext AndroidBuildResult(false, "", error = "Install the Android SDK and ARM64 build tools first.")
-            }
-            if (!projectRoot.isDirectory || !projectRoot.canRead()) {
-                return@withContext AndroidBuildResult(false, "", error = "The selected Android project folder cannot be read.")
-            }
-            val hasSettings = projectRoot.findFile("settings.gradle.kts")?.isFile == true ||
-                projectRoot.findFile("settings.gradle")?.isFile == true
-            if (!hasSettings) {
-                return@withContext AndroidBuildResult(false, "", error = "The selected folder is not a Gradle project. A settings.gradle or settings.gradle.kts file is required.")
-            }
-            val workspace = workspaceDirectory
-            try {
-                if (workspacePreferences.getString("tree_uri", null) == projectRoot.uri.toString() && workspace.isDirectory) {
-                    ProjectWorkspaceSync.copyToSaf(appContext, workspace, projectRoot)
-                }
-                ProjectWorkspaceSync.copyFromSaf(appContext, projectRoot, workspace)
-                File(workspace, "local.properties").writeText("sdk.dir=/opt/android-sdk\n")
-                File(rootfsDirectory, "workspace").mkdirs()
-                val result = runCommand(
-                    "cd /workspace && if [ -f ./gradlew ]; then sh ./gradlew --no-daemon assembleDebug; else gradle --no-daemon assembleDebug; fi",
-                    timeoutSeconds = 3600,
-                    binds = listOf(workspace.absolutePath to "/workspace"),
-                    maxOutputChars = MAX_BUILD_OUTPUT_CHARS
-                )
-                if (result.exitCode != 0) {
-                    return@withContext AndroidBuildResult(
+            workspaceMutex.withLock {
+                if (!androidSdkMarker.isFile) {
+                    return@withLock AndroidBuildResult(
                         false,
-                        result.output,
-                        error = result.error ?: "Gradle build failed with exit code " + (result.exitCode?.toString() ?: "unknown")
+                        "",
+                        error = "Install the Android SDK and ARM64 build tools first."
                     )
                 }
-                val apk = File(workspace, "app/build/outputs/apk/debug/app-debug.apk")
-                if (!apk.isFile) {
-                    return@withContext AndroidBuildResult(
+                if (!projectRoot.isDirectory || !projectRoot.canRead()) {
+                    return@withLock AndroidBuildResult(
                         false,
-                        result.output,
-                        error = "Gradle completed but app/build/outputs/apk/debug/app-debug.apk was not found."
+                        "",
+                        error = "The selected Android project folder cannot be read."
                     )
                 }
-                val copiedApk = ProjectWorkspaceSync.copyArtifactToSaf(
-                    appContext,
-                    apk,
-                    projectRoot,
-                    "FxForge-debug.apk"
-                )
-                AndroidBuildResult(true, result.output, copiedApk.uri.toString())
-            } catch (exception: Exception) {
-                AndroidBuildResult(
-                    false,
-                    "",
-                    error = exception.message ?: "Could not build the selected Android project."
-                )
+                val hasSettings = projectRoot.findFile("settings.gradle.kts")?.isFile == true ||
+                    projectRoot.findFile("settings.gradle")?.isFile == true
+                if (!hasSettings) {
+                    return@withLock AndroidBuildResult(
+                        false,
+                        "",
+                        error = "The selected folder is not a Gradle project. A settings.gradle or settings.gradle.kts file is required."
+                    )
+                }
+
+                // A project build must not repurpose the active OpenCode workspace.
+                // Build from it only when the selected SAF root is the exact active
+                // workspace; otherwise use an isolated temporary build directory.
+                val isActiveWorkspace =
+                    workspacePreferences.getString("tree_uri", null) == projectRoot.uri.toString() &&
+                        workspaceDirectory.isDirectory
+                val workspace = if (isActiveWorkspace) {
+                    workspaceDirectory
+                } else {
+                    File(appContext.filesDir, "build-workspaces/" + UUID.randomUUID().toString())
+                }
+                val temporaryWorkspace = !isActiveWorkspace
+
+                try {
+                    if (temporaryWorkspace) {
+                        ProjectWorkspaceSync.copyFromSaf(appContext, projectRoot, workspace)
+                    }
+                    File(workspace, "local.properties").writeText("sdk.dir=/opt/android-sdk\\n")
+                    File(rootfsDirectory, "workspace").mkdirs()
+                    val result = runCommand(
+                        "cd /workspace && if [ -f ./gradlew ]; then sh ./gradlew --no-daemon assembleDebug; else gradle --no-daemon assembleDebug; fi",
+                        timeoutSeconds = 3600,
+                        binds = listOf(workspace.absolutePath to "/workspace"),
+                        maxOutputChars = MAX_BUILD_OUTPUT_CHARS
+                    )
+                    if (result.exitCode != 0) {
+                        return@withLock AndroidBuildResult(
+                            false,
+                            result.output,
+                            error = result.error ?: "Gradle build failed with exit code " +
+                                (result.exitCode?.toString() ?: "unknown")
+                        )
+                    }
+                    val apk = File(workspace, "app/build/outputs/apk/debug/app-debug.apk")
+                    if (!apk.isFile) {
+                        return@withLock AndroidBuildResult(
+                            false,
+                            result.output,
+                            error = "Gradle completed but app/build/outputs/apk/debug/app-debug.apk was not found."
+                        )
+                    }
+                    val copiedApk = ProjectWorkspaceSync.copyArtifactToSaf(
+                        appContext,
+                        apk,
+                        projectRoot,
+                        "FxForge-debug.apk"
+                    )
+                    AndroidBuildResult(true, result.output, copiedApk.uri.toString())
+                } catch (exception: Exception) {
+                    AndroidBuildResult(
+                        false,
+                        "",
+                        error = exception.message ?: "Could not build the selected Android project."
+                    )
+                } finally {
+                    if (temporaryWorkspace && workspace.exists() && !workspace.deleteRecursively()) {
+                        // Leave a recoverable build directory rather than risk touching
+                        // the active user's workspace if Android refuses deletion.
+                    }
+                }
             }
         }
 
