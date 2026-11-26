@@ -1304,7 +1304,7 @@ class LinuxRuntimeManager(context: Context) {
                     } else {
                         ProjectWorkspaceSync.copyFromSaf(appContext, projectRoot, workspace)
                     }
-                    File(workspace, "local.properties").writeText("sdk.dir=/opt/android-sdk\\n")
+                    File(workspace, "local.properties").writeText("sdk.dir=/opt/android-sdk\n")
                     File(rootfsDirectory, "workspace").mkdirs()
                     val result = runCommand(
                         "cd /workspace && if [ -f ./gradlew ]; then sh ./gradlew --no-daemon assembleDebug; else gradle --no-daemon assembleDebug; fi",
