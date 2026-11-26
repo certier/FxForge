@@ -779,7 +779,7 @@ class LinuxRuntimeManager(context: Context) {
                 mutableTerminalState.value = LinuxTerminalState(
                     error = "Install the ARM64 PRoot runtime and Debian before opening the Linux shell."
                 )
-                return@withLock
+                return@terminalLock
             }
             mutableTerminalState.value = LinuxTerminalState(starting = true)
             workspaceDirectory.mkdirs()
