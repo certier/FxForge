@@ -125,6 +125,8 @@ object ProjectWorkspaceSync {
         )
     }
 
+    internal fun snapshotPrivateFiles(root: File): Map<String, String> = snapshotPrivate(root)
+
     private fun snapshotPrivate(root: File): Map<String, String> {
         if (!root.isDirectory) throw IOException("The private workspace directory is unavailable.")
         val canonicalRoot = root.canonicalFile
