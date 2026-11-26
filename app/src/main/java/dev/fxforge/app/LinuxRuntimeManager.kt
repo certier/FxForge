@@ -964,21 +964,33 @@ class LinuxRuntimeManager(context: Context) {
                 // Reconcile the old project before changing the active URI. Each
                 // project keeps its own private directory, so switching never
                 // replaces or discards another project's local files.
+                var previousWorkspaceDetached = false
                 if (!activeUri.isNullOrBlank()) {
-                    val previousRoot =
+                    val previousRoot = try {
                         androidx.documentfile.provider.DocumentFile.fromTreeUri(appContext, Uri.parse(activeUri))
-                            ?: throw IOException("The previous workspace folder is unavailable. Its private files were preserved.")
-                    val previousSynced = synchronizeWorkspaceLocked(
-                        previousRoot,
-                        activeUri,
-                        preferPrivateOnConflicts
-                    )
-                    if (!previousSynced) {
-                        mutableWorkspaceState.value = mutableWorkspaceState.value.copy(
-                            syncing = false,
-                            error = "Resolve the previous workspace conflicts before switching projects. No files were discarded."
+                    } catch (_: Exception) {
+                        null
+                    }
+                    if (previousRoot == null || !previousRoot.isDirectory ||
+                        !previousRoot.canRead() || !previousRoot.canWrite()
+                    ) {
+                        // The Android grant may have been revoked or the external
+                        // folder removed. Keep the old private project directory
+                        // under its original URI hash; never replace or delete it.
+                        previousWorkspaceDetached = true
+                    } else {
+                        val previousSynced = synchronizeWorkspaceLocked(
+                            previousRoot,
+                            activeUri,
+                            preferPrivateOnConflicts
                         )
-                        return@withLock
+                        if (!previousSynced) {
+                            mutableWorkspaceState.value = mutableWorkspaceState.value.copy(
+                                syncing = false,
+                                error = "Resolve the previous workspace conflicts before switching projects. No files were discarded."
+                            )
+                            return@withLock
+                        }
                     }
                 } else if (legacyWorkspaceDirectory.listFiles()?.isNotEmpty() == true) {
                     throw IOException(
@@ -1053,7 +1065,11 @@ class LinuxRuntimeManager(context: Context) {
                 mutableWorkspaceState.value = WorkspaceState(
                     selected = true,
                     name = source.name ?: "Android project",
-                    lastSyncSummary = "Workspace ready · " + (source.name ?: "Android project")
+                    lastSyncSummary = if (previousWorkspaceDetached) {
+                        "Workspace ready · previous private project preserved because its Android folder access was revoked"
+                    } else {
+                        "Workspace ready · " + (source.name ?: "Android project")
+                    }
                 )
             } catch (exception: Exception) {
                 mutableWorkspaceState.value = mutableWorkspaceState.value.copy(
