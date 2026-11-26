@@ -162,6 +162,29 @@ class LinuxRuntimeManager(context: Context) {
 
     init {
         val uri = workspacePreferences.getString("tree_uri", null)
+        if (!uri.isNullOrBlank()) {
+            val restored = try {
+                val root = androidx.documentfile.provider.DocumentFile.fromTreeUri(appContext, Uri.parse(uri))
+                root != null && root.isDirectory && root.canRead() && root.canWrite()
+            } catch (_: SecurityException) {
+                false
+            } catch (_: IllegalArgumentException) {
+                false
+            }
+            if (restored) {
+                mutableWorkspaceState.value = WorkspaceState(
+                    selected = true,
+                    name = workspacePreferences.getString("tree_name", null)
+                )
+            } else {
+                mutableWorkspaceState.value = WorkspaceState(
+                    selected = false,
+                    name = workspacePreferences.getString("tree_name", null),
+                    error = "FxForge can no longer access the saved project folder. Re-select it to restore read and write access. Your private workspace files are preserved."
+                )
+            }
+        }
+
         if (!uri.isNullOrBlank() && legacyWorkspaceDirectory.exists()) {
             val projectDirectory = workspaceDirectoryFor(uri)
             if (!projectDirectory.exists()) {
