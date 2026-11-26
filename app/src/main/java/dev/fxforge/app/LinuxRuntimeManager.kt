@@ -955,7 +955,31 @@ class LinuxRuntimeManager(context: Context) {
             )
             try {
                 if (activeUri == requestedUri) {
-                    synchronizeWorkspaceLocked(source, requestedUri, preferPrivateOnConflicts)
+                    val synchronized = synchronizeWorkspaceLocked(
+                        source,
+                        requestedUri,
+                        preferPrivateOnConflicts
+                    )
+                    if (synchronized) {
+                        val name = source.name ?: workspacePreferences.getString("tree_name", null)
+                            ?: "Android project"
+                        if (!workspacePreferences.edit()
+                                .putString("tree_uri", requestedUri)
+                                .putString("tree_name", name)
+                                .commit()
+                        ) {
+                            mutableWorkspaceState.value = mutableWorkspaceState.value.copy(
+                                error = "Project files were synchronized, but FxForge could not restore the saved folder permission state."
+                            )
+                            return@withLock
+                        }
+                        mutableWorkspaceState.value = mutableWorkspaceState.value.copy(
+                            selected = true,
+                            name = name,
+                            syncing = false,
+                            error = null
+                        )
+                    }
                     return@withLock
                 }
 
