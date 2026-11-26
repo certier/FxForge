@@ -1221,9 +1221,13 @@ class LinuxRuntimeManager(context: Context) {
                 lastSyncSummary = buildString {
                     append("Synced ")
                     append(result.copiedToPrivate + result.copiedToStorage)
-                    append(" file(s); removed ")
+                    append(" file(s), created ")
+                    append(result.directoriesCreatedPrivate + result.directoriesCreatedStorage)
+                    append(" folder(s); removed ")
                     append(result.deletedFromPrivate + result.deletedFromStorage)
-                    append(" deleted file(s)")
+                    append(" file(s) and ")
+                    append(result.directoriesDeletedPrivate + result.directoriesDeletedStorage)
+                    append(" folder(s)")
                 }
             )
             true
