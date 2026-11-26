@@ -1278,21 +1278,30 @@ class LinuxRuntimeManager(context: Context) {
                     )
                 }
 
-                // A project build must not repurpose the active OpenCode workspace.
-                // Build from it only when the selected SAF root is the exact active
-                // workspace; otherwise use an isolated temporary build directory.
+                if (!projectRoot.canWrite()) {
+                    return@withLock AndroidBuildResult(
+                        false,
+                        "",
+                        error = "The selected project folder is read-only. Choose a writable folder to receive the APK."
+                    )
+                }
+
+                // Always build in an isolated snapshot. OpenCode and the terminal
+                // can keep using the live Workspace without observing Gradle's
+                // generated files or having their edits overwritten by a build.
                 val isActiveWorkspace =
                     workspacePreferences.getString("tree_uri", null) == projectRoot.uri.toString() &&
                         workspaceDirectory.isDirectory
-                val workspace = if (isActiveWorkspace) {
-                    workspaceDirectory
-                } else {
-                    File(appContext.filesDir, "build-workspaces/" + UUID.randomUUID().toString())
-                }
-                val temporaryWorkspace = !isActiveWorkspace
+                val workspace = File(
+                    appContext.filesDir,
+                    "build-workspaces/" + UUID.randomUUID().toString()
+                )
+                val temporaryWorkspace = true
 
                 try {
-                    if (temporaryWorkspace) {
+                    if (isActiveWorkspace) {
+                        ProjectWorkspaceSync.copyPrivateWorkspaceSnapshot(workspaceDirectory, workspace)
+                    } else {
                         ProjectWorkspaceSync.copyFromSaf(appContext, projectRoot, workspace)
                     }
                     File(workspace, "local.properties").writeText("sdk.dir=/opt/android-sdk\\n")
