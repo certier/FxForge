@@ -1826,6 +1826,8 @@ private fun EnvironmentScreen(padding: PaddingValues, linuxRuntimeManager: Linux
     var linuxCommand by remember { mutableStateOf("uname -a && cat /etc/os-release") }
     var runningLinuxCommand by remember { mutableStateOf(false) }
     var linuxCommandResult by remember { mutableStateOf<LinuxCommandResult?>(null) }
+    var scanningTools by remember { mutableStateOf(false) }
+    var toolInventory by remember { mutableStateOf<LinuxCommandResult?>(null) }
     val items = listOf(
         "Android release" to Build.VERSION.RELEASE,
         "API level" to Build.VERSION.SDK_INT.toString(),
@@ -1927,6 +1929,56 @@ private fun EnvironmentScreen(padding: PaddingValues, linuxRuntimeManager: Linux
         item {
             Text("Device diagnostics", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
             Text("Live information from Android and the installed development environment.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        item {
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow)
+            ) {
+                Column(
+                    Modifier.fillMaxWidth().padding(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    Text("Installed tools & libraries", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                    Text(
+                        "Scan the real Debian package database and Android SDK to see installed versions, including Java, Gradle, SDK packages and whether an NDK is present.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Button(
+                        enabled = linuxState.installed && !scanningTools,
+                        onClick = {
+                            scanningTools = true
+                            scope.launch {
+                                toolInventory = linuxRuntimeManager.inspectInstalledTools()
+                                scanningTools = false
+                            }
+                        }
+                    ) {
+                        Text(if (scanningTools) "Scanning environment…" else "Scan installed tools")
+                    }
+                    if (scanningTools) CircularProgressIndicator()
+                    toolInventory?.let { result ->
+                        Text(
+                            result.error ?: "Scan exit code: " + (result.exitCode?.toString() ?: "unknown"),
+                            color = if (result.exitCode == 0) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error,
+                            style = MaterialTheme.typography.labelMedium
+                        )
+                        Card(Modifier.fillMaxWidth()) {
+                            SelectionContainer {
+                                Text(
+                                    result.output.ifBlank { result.error ?: "No inventory output was returned." },
+                                    modifier = Modifier.fillMaxWidth().heightIn(max = 360.dp).verticalScroll(rememberScrollState()).padding(12.dp),
+                                    style = MaterialTheme.typography.bodySmall
+                                )
+                            }
+                        }
+                    }
+                    if (!linuxState.installed) {
+                        Text("Install Debian first to inspect Linux packages.", style = MaterialTheme.typography.bodySmall)
+                    }
+                }
+            }
         }
         items(items) { (name, value) -> InfoCard(name, value) }
         item {
