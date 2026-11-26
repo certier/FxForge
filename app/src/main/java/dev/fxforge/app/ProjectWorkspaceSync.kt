@@ -492,6 +492,113 @@ object ProjectWorkspaceSync {
         }
     }
 
+    /**
+     * Copies the live private Workspace into an isolated build directory.
+     * Each file is checked against a pre-copy hash and the source tree is
+     * rescanned afterwards, so an editor write during staging cannot silently
+     * create a mixed project snapshot.
+     */
+    internal fun copyPrivateWorkspaceSnapshot(
+        source: File,
+        destination: File
+    ): WorkspaceCopyResult {
+        if (!source.isDirectory || java.nio.file.Files.isSymbolicLink(source.toPath())) {
+            throw IOException("The private project workspace is unavailable or unsafe.")
+        }
+        if (destination.exists()) {
+            throw IOException("The isolated build workspace already exists.")
+        }
+        val parent = destination.absoluteFile.parentFile
+            ?: throw IOException("The build workspace has no parent directory.")
+        if (!parent.exists() && !parent.mkdirs()) {
+            throw IOException("Could not create the isolated build workspace parent.")
+        }
+        val staging = File(parent, ".fxforge-build-snapshot-" + UUID.randomUUID().toString())
+        if (!staging.mkdirs()) throw IOException("Could not create the build snapshot staging directory.")
+
+        try {
+            val expectedSnapshot = snapshotPrivate(source)
+            val counter = CopyCounter()
+
+            fun copyDirectory(current: File, targetDirectory: File, relativeDirectory: String, depth: Int) {
+                if (depth > 32) throw IOException("Workspace folder nesting is too deep.")
+                val children = current.listFiles()
+                    ?: throw IOException("Could not read workspace directory: " + current.name)
+                children.sortedBy { it.name }.forEach { child ->
+                    val name = child.name
+                    validatePathSegment(name)
+                    if (child.isDirectory && name in ignoredDirectoryNames) return@forEach
+                    if (child.isFile && name in ignoredFileNames) return@forEach
+                    if (name.startsWith(".fxforge-tmp-") ||
+                        name.startsWith(".fxforge-backup-") ||
+                        name.startsWith(".fxforge-delete-")
+                    ) return@forEach
+                    if (java.nio.file.Files.isSymbolicLink(child.toPath())) {
+                        throw IOException("Workspace contains a symbolic link that cannot be built safely: " + name)
+                    }
+                    val canonical = child.canonicalFile
+                    if (!canonical.path.startsWith(source.canonicalPath + File.separator)) {
+                        throw IOException("Workspace contains an unsafe path: " + name)
+                    }
+                    val relative = if (relativeDirectory.isEmpty()) name else "$relativeDirectory/$name"
+                    val target = File(targetDirectory, name)
+                    if (child.isDirectory) {
+                        if (!target.mkdirs() && !target.isDirectory) {
+                            throw IOException("Could not create build snapshot directory: " + relative)
+                        }
+                        copyDirectory(child, target, relative, depth + 1)
+                    } else if (child.isFile) {
+                        if (child.length() > MAX_FILE_BYTES) {
+                            throw IOException("Workspace file exceeds the 512 MiB limit: " + relative)
+                        }
+                        val expectedHash = expectedSnapshot[relative]
+                            ?: throw IOException("Workspace changed while preparing the build: " + relative)
+                        val digest = MessageDigest.getInstance("SHA-256")
+                        var copied = 0L
+                        child.inputStream().use { input ->
+                            FileOutputStream(target).use { output ->
+                                val buffer = ByteArray(BUFFER_SIZE)
+                                while (true) {
+                                    val count = input.read(buffer)
+                                    if (count < 0) break
+                                    copied += count
+                                    counter.bytes += count
+                                    if (copied > MAX_FILE_BYTES || counter.bytes > MAX_TOTAL_BYTES) {
+                                        throw IOException("Workspace exceeds FxForge's build snapshot transfer limit.")
+                                    }
+                                    digest.update(buffer, 0, count)
+                                    output.write(buffer, 0, count)
+                                }
+                            }
+                        }
+                        if (digest.digest().toHex() != expectedHash) {
+                            throw IOException("Workspace file changed while preparing the build: " + relative)
+                        }
+                        child.lastModified().takeIf { it > 0 }?.let(target::setLastModified)
+                        counter.files++
+                        if (counter.files > MAX_FILES) {
+                            throw IOException("Workspace contains more than 10,000 files.")
+                        }
+                    }
+                }
+            }
+
+            copyDirectory(source, staging, "", 0)
+            if (snapshotPrivate(source) != expectedSnapshot ||
+                snapshotPrivate(staging) != expectedSnapshot
+            ) {
+                throw IOException("Workspace changed while the build snapshot was being prepared. Save and retry the build.")
+            }
+            if (!staging.renameTo(destination)) {
+                throw IOException("Could not activate the isolated build snapshot.")
+            }
+            return WorkspaceCopyResult(destination, counter.files, counter.bytes)
+        } catch (exception: Exception) {
+            staging.deleteRecursively()
+            throw exception
+        }
+    }
+
     fun copyArtifactToSaf(
         context: Context,
         artifact: File,
