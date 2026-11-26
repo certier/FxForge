@@ -83,7 +83,9 @@ data class WorkspaceState(
     val selected: Boolean = false,
     val name: String? = null,
     val syncing: Boolean = false,
-    val error: String? = null
+    val error: String? = null,
+    val conflicts: List<String> = emptyList(),
+    val lastSyncSummary: String? = null
 )
 
 data class LinuxTerminalState(
@@ -873,56 +875,262 @@ class LinuxRuntimeManager(context: Context) {
         }
     }
 
-    suspend fun syncWorkspaceFromSaf(source: androidx.documentfile.provider.DocumentFile) =
-        withContext(Dispatchers.IO) {
-            workspaceMutex.withLock {
-                if (!source.isDirectory || !source.canRead()) {
-                    mutableWorkspaceState.value = mutableWorkspaceState.value.copy(
-                        error = "The selected workspace folder cannot be read."
-                    )
-                    return@withLock
-                }
-                mutableWorkspaceState.value = mutableWorkspaceState.value.copy(syncing = true, error = null)
-                try {
-                    ProjectWorkspaceSync.copyFromSaf(appContext, source, workspaceDirectory)
-                    workspacePreferences.edit()
-                        .putString("tree_uri", source.uri.toString())
-                        .putString("tree_name", source.name ?: "Android project")
-                        .apply()
-                    mutableWorkspaceState.value = WorkspaceState(
-                        selected = true,
-                        name = source.name ?: "Android project"
-                    )
-                } catch (exception: Exception) {
-                    mutableWorkspaceState.value = mutableWorkspaceState.value.copy(
-                        syncing = false,
-                        error = exception.message ?: "Could not copy the project into the Linux workspace."
-                    )
-                }
-            }
-        }
-
-    suspend fun syncWorkspaceToSaf() = withContext(Dispatchers.IO) {
+    suspend fun syncWorkspaceFromSaf(
+        source: androidx.documentfile.provider.DocumentFile,
+        preferPrivateOnConflicts: Boolean? = null
+    ) = withContext(Dispatchers.IO) {
         workspaceMutex.withLock {
-            val uri = workspacePreferences.getString("tree_uri", null)
-            if (uri.isNullOrBlank()) {
+            if (!source.isDirectory || !source.canRead() || !source.canWrite()) {
                 mutableWorkspaceState.value = mutableWorkspaceState.value.copy(
-                    error = "Choose a project folder before syncing changes."
+                    error = "The selected workspace folder must be readable and writable."
                 )
                 return@withLock
             }
-            mutableWorkspaceState.value = mutableWorkspaceState.value.copy(syncing = true, error = null)
+
+            val requestedUri = source.uri.toString()
+            val activeUri = workspacePreferences.getString("tree_uri", null)
+            mutableWorkspaceState.value = mutableWorkspaceState.value.copy(
+                syncing = true,
+                error = null,
+                conflicts = emptyList()
+            )
             try {
-                val destination = androidx.documentfile.provider.DocumentFile.fromTreeUri(appContext, Uri.parse(uri))
-                    ?: throw IOException("The saved workspace folder is no longer available.")
-                ProjectWorkspaceSync.copyToSaf(appContext, workspaceDirectory, destination)
-                mutableWorkspaceState.value = mutableWorkspaceState.value.copy(syncing = false, error = null)
+                if (activeUri == requestedUri) {
+                    synchronizeWorkspaceLocked(source, requestedUri, preferPrivateOnConflicts)
+                    return@withLock
+                }
+
+                // Before switching projects, reconcile the old private workspace
+                // with its original SAF tree. Never discard an unsynced project.
+                if (!activeUri.isNullOrBlank()) {
+                    val previousRoot =
+                        androidx.documentfile.provider.DocumentFile.fromTreeUri(appContext, Uri.parse(activeUri))
+                            ?: throw IOException("The previous workspace folder is no longer available. Its private files were preserved.")
+                    val previousSynced = synchronizeWorkspaceLocked(
+                        previousRoot,
+                        activeUri,
+                        preferPrivateOnConflicts
+                    )
+                    if (!previousSynced) {
+                        mutableWorkspaceState.value = mutableWorkspaceState.value.copy(
+                            syncing = false,
+                            error = "Resolve the previous workspace conflicts before switching projects. No files were discarded."
+                        )
+                        return@withLock
+                    }
+                } else if (workspaceDirectory.listFiles()?.isNotEmpty() == true) {
+                    throw IOException(
+                        "FxForge found private workspace files without a linked storage folder. " +
+                            "They were preserved; link or recover that workspace before switching."
+                    )
+                }
+
+                // Import into a separate directory first. The current active
+                // workspace remains intact until the incoming project and its
+                // baseline have both been verified.
+                val parent = workspaceDirectory.parentFile
+                    ?: throw IOException("The private workspace has no parent directory.")
+                if (!parent.exists() && !parent.mkdirs()) {
+                    throw IOException("Could not create the private workspace directory.")
+                }
+                val stagingWorkspace = File(parent, ".incoming-" + UUID.randomUUID().toString())
+                ProjectWorkspaceSync.copyFromSaf(appContext, source, stagingWorkspace)
+                try {
+                    val initialSync = ProjectWorkspaceSync.synchronize(
+                        appContext,
+                        source,
+                        stagingWorkspace,
+                        emptyMap()
+                    )
+                    if (initialSync.conflicts.isNotEmpty()) {
+                        throw IOException("The selected folder changed during import. Retry the workspace selection.")
+                    }
+                    val baseline = initialSync.baselineAfter
+                        ?: throw IOException("Could not verify the imported workspace.")
+                    saveWorkspaceBaseline(requestedUri, baseline)
+                    replaceActiveWorkspace(stagingWorkspace)
+                } catch (exception: Exception) {
+                    stagingWorkspace.deleteRecursively()
+                    throw exception
+                }
+
+                workspacePreferences.edit()
+                    .putString("tree_uri", requestedUri)
+                    .putString("tree_name", source.name ?: "Android project")
+                    .apply()
+                mutableWorkspaceState.value = WorkspaceState(
+                    selected = true,
+                    name = source.name ?: "Android project",
+                    lastSyncSummary = "Workspace imported and verified"
+                )
             } catch (exception: Exception) {
                 mutableWorkspaceState.value = mutableWorkspaceState.value.copy(
                     syncing = false,
-                    error = exception.message ?: "Could not sync project changes back to Android storage."
+                    error = exception.message ?: "Could not synchronize the selected project workspace."
                 )
             }
+        }
+    }
+
+    suspend fun syncWorkspaceToSaf(preferPrivateOnConflicts: Boolean? = null) =
+        withContext(Dispatchers.IO) {
+            workspaceMutex.withLock {
+                val uri = workspacePreferences.getString("tree_uri", null)
+                if (uri.isNullOrBlank()) {
+                    mutableWorkspaceState.value = mutableWorkspaceState.value.copy(
+                        error = "Choose a project folder before synchronizing changes."
+                    )
+                    return@withLock
+                }
+                val destination =
+                    androidx.documentfile.provider.DocumentFile.fromTreeUri(appContext, Uri.parse(uri))
+                if (destination == null) {
+                    mutableWorkspaceState.value = mutableWorkspaceState.value.copy(
+                        syncing = false,
+                        error = "The saved workspace folder is no longer available. Private files were preserved."
+                    )
+                    return@withLock
+                }
+                synchronizeWorkspaceLocked(destination, uri, preferPrivateOnConflicts)
+            }
+        }
+
+    /**
+     * Returns false when conflicts are waiting for an explicit user decision.
+     * Both copies and the old baseline remain intact in that case.
+     */
+    private fun synchronizeWorkspaceLocked(
+        storageRoot: androidx.documentfile.provider.DocumentFile,
+        uri: String,
+        preferPrivateOnConflicts: Boolean?
+    ): Boolean {
+        mutableWorkspaceState.value = mutableWorkspaceState.value.copy(
+            syncing = true,
+            error = null,
+            conflicts = emptyList()
+        )
+        return try {
+            val baseline = loadWorkspaceBaseline(uri)
+            val result = ProjectWorkspaceSync.synchronize(
+                appContext,
+                storageRoot,
+                workspaceDirectory,
+                baseline,
+                preferPrivateOnConflicts
+            )
+            if (result.conflicts.isNotEmpty()) {
+                val paths = result.conflicts.map { it.path }
+                mutableWorkspaceState.value = mutableWorkspaceState.value.copy(
+                    syncing = false,
+                    error = "Both copies changed these files. Choose which version to keep before syncing.",
+                    conflicts = paths
+                )
+                return false
+            }
+            val newBaseline = result.baselineAfter
+                ?: throw IOException("The workspace sync completed without a verified baseline.")
+            saveWorkspaceBaseline(uri, newBaseline)
+            mutableWorkspaceState.value = mutableWorkspaceState.value.copy(
+                syncing = false,
+                error = null,
+                conflicts = emptyList(),
+                lastSyncSummary = buildString {
+                    append("Synced ")
+                    append(result.copiedToPrivate + result.copiedToStorage)
+                    append(" file(s); removed ")
+                    append(result.deletedFromPrivate + result.deletedFromStorage)
+                    append(" deleted file(s)")
+                }
+            )
+            true
+        } catch (exception: Exception) {
+            mutableWorkspaceState.value = mutableWorkspaceState.value.copy(
+                syncing = false,
+                error = exception.message ?: "Workspace synchronization failed. Existing files were preserved where possible."
+            )
+            false
+        }
+    }
+
+    private fun loadWorkspaceBaseline(uri: String): Map<String, String> {
+        val file = workspaceBaselineFile(uri)
+        if (!file.isFile) return emptyMap()
+        return try {
+            val json = JSONObject(file.readText(Charsets.UTF_8))
+            val result = linkedMapOf<String, String>()
+            val keys = json.keys()
+            while (keys.hasNext()) {
+                val path = keys.next()
+                result[path] = json.getString(path)
+            }
+            result
+        } catch (exception: Exception) {
+            throw IOException("The workspace sync history is damaged. Files were not overwritten; recovery is required.", exception)
+        }
+    }
+
+    private fun saveWorkspaceBaseline(uri: String, baseline: Map<String, String>) {
+        val destination = workspaceBaselineFile(uri)
+        val parent = destination.parentFile
+            ?: throw IOException("Could not locate the workspace history directory.")
+        if (!parent.exists() && !parent.mkdirs()) {
+            throw IOException("Could not create the workspace history directory.")
+        }
+        val json = JSONObject()
+        baseline.toSortedMap().forEach { (path, hash) -> json.put(path, hash) }
+        val temporary = File.createTempFile(".workspace-manifest-", ".tmp", parent)
+        val backup = File(parent, ".workspace-manifest-backup-" + UUID.randomUUID().toString())
+        try {
+            FileOutputStream(temporary).use { output ->
+                output.write(json.toString().toByteArray(Charsets.UTF_8))
+                output.fd.sync()
+            }
+            var movedOld = false
+            if (destination.exists()) {
+                if (!destination.renameTo(backup)) {
+                    throw IOException("Could not preserve the previous workspace sync history.")
+                }
+                movedOld = true
+            }
+            if (!temporary.renameTo(destination)) {
+                if (movedOld && !backup.renameTo(destination)) {
+                    throw IOException("Could not update the workspace history. Recovery copy: " + backup.absolutePath)
+                }
+                throw IOException("Could not activate the updated workspace sync history.")
+            }
+            if (movedOld) backup.delete()
+        } catch (exception: Exception) {
+            temporary.delete()
+            if (!destination.exists() && backup.exists()) backup.renameTo(destination)
+            throw exception
+        }
+    }
+
+    private fun workspaceBaselineFile(uri: String): File {
+        val key = MessageDigest.getInstance("SHA-256")
+            .digest(uri.toByteArray(Charsets.UTF_8))
+            .joinToString("") { "%02x".format(it) }
+        return File(appContext.filesDir, "workspaces/manifests/$key.json")
+    }
+
+    private fun replaceActiveWorkspace(staging: File) {
+        val backup = File(workspaceDirectory.parentFile, ".previous-workspace-" + UUID.randomUUID().toString())
+        var movedOld = false
+        if (workspaceDirectory.exists()) {
+            if (!workspaceDirectory.renameTo(backup)) {
+                throw IOException("Could not safely preserve the current private workspace.")
+            }
+            movedOld = true
+        }
+        if (!staging.renameTo(workspaceDirectory)) {
+            if (movedOld && !backup.renameTo(workspaceDirectory)) {
+                throw IOException("Could not activate the new workspace or restore the previous one. Recovery copy: " + backup.absolutePath)
+            }
+            throw IOException("Could not activate the imported workspace.")
+        }
+        if (movedOld && !backup.deleteRecursively()) {
+            // The old copy was already reconciled with its original SAF folder.
+            // A leftover recovery directory is safe and can be cleaned later.
         }
     }
 
