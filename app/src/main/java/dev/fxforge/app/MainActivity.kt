@@ -501,10 +501,10 @@ private fun HomeScreen(
     val terminalState by linuxRuntimeManager.terminalState.collectAsState()
     val workspaceState by linuxRuntimeManager.workspaceState.collectAsState()
 
-    val setupSteps = listOf(linuxState.installed, sdkState.installed, openCodeState.installed)
+    val setupSteps = listOf(linuxState.installed, sdkState.installed, openCodeState.installed, workspaceState.selected)
     val readyCount = setupSteps.count { it }
     val progress by animateFloatAsState(
-        targetValue = readyCount / 3f,
+        targetValue = readyCount / 4f,
         animationSpec = tween(durationMillis = 650),
         label = "setup-progress"
     )
@@ -512,6 +512,7 @@ private fun HomeScreen(
         !linuxState.installed -> "Install Debian Linux"
         !sdkState.installed -> "Install Android SDK"
         !openCodeState.installed -> "Set up OpenCode"
+        !workspaceState.selected -> "Choose project folder"
         else -> "Create your first project"
     }
     val nextDestination = when {
@@ -561,7 +562,7 @@ private fun HomeScreen(
                         }
                     }
                     Text(
-                        "One workspace for Android projects, Linux tools, terminal workflows and AI-assisted coding.",
+                        "A guided Android development workspace with Linux, build tools, projects and AI-assisted coding.",
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onPrimaryContainer
                     )
@@ -595,7 +596,7 @@ private fun HomeScreen(
                         Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
                             Text("First-time setup", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
                             Text(
-                                if (readyCount == 3) "Your core workstation is ready"
+                                if (readyCount == 4) "Your core workstation is ready"
                                 else "A few steps before you can build and code",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -604,7 +605,7 @@ private fun HomeScreen(
                         Surface(shape = CircleShape, color = MaterialTheme.colorScheme.secondaryContainer) {
                             AnimatedContent(targetState = readyCount, label = "setup-count") { count ->
                                 Text(
-                                    "$count / 3",
+                                    "$count / 4",
                                     modifier = Modifier.padding(horizontal = 12.dp, vertical = 7.dp),
                                     style = MaterialTheme.typography.labelLarge,
                                     color = MaterialTheme.colorScheme.onSecondaryContainer
@@ -638,7 +639,14 @@ private fun HomeScreen(
                         complete = openCodeState.installed,
                         active = sdkState.installed && !openCodeState.installed
                     )
-                    AnimatedVisibility(visible = readyCount == 3, enter = fadeIn() + slideInVertically(), exit = fadeOut()) {
+                    SetupStepRow(
+                        number = "4",
+                        title = "Project folder",
+                        detail = if (workspaceState.selected) "Connected · ${workspaceState.name ?: "workspace"}" else "Choose a folder so OpenCode can edit and save your projects",
+                        complete = workspaceState.selected,
+                        active = openCodeState.installed && !workspaceState.selected
+                    )
+                    AnimatedVisibility(visible = readyCount == 4, enter = fadeIn() + slideInVertically(), exit = fadeOut()) {
                         Text(
                             "Setup complete. Create a project or open your workspace to start building.",
                             style = MaterialTheme.typography.bodyMedium,
