@@ -1058,17 +1058,21 @@ class LinuxRuntimeManager(context: Context) {
                         val output = StringBuilder()
                         val buffer = CharArray(4096)
                         var truncated = false
+                        val outputLimit = maxOutputChars.coerceIn(1024, MAX_BUILD_OUTPUT_CHARS)
                         while (true) {
                             val count = reader.read(buffer)
                             if (count < 0) break
-                            val remaining = maxOutputChars.coerceIn(1024, MAX_BUILD_OUTPUT_CHARS) - output.length
-                            if (count > remaining) {
-                                output.append(buffer, 0, remaining)
+                            val remaining = outputLimit - output.length
+                            if (remaining > 0) {
+                                val retained = minOf(count, remaining)
+                                output.append(buffer, 0, retained)
+                                if (retained < count) truncated = true
+                            } else {
                                 truncated = true
-                                process.destroyForcibly()
-                                break
                             }
-                            output.append(buffer, 0, count)
+                            // Keep draining the pipe after the display limit. Killing
+                            // the child here used to turn successful apt/Gradle commands
+                            // into failures merely because they produced verbose output.
                         }
                         CommandOutput(output.toString(), truncated)
                     }
@@ -1082,7 +1086,18 @@ class LinuxRuntimeManager(context: Context) {
                 val timeout = timeoutSeconds.coerceIn(1, MAX_COMMAND_TIMEOUT_SECONDS)
                 if (!process.waitFor(timeout.toLong(), TimeUnit.SECONDS)) {
                     process.destroyForcibly()
-                    LinuxCommandResult("", null, false, "Linux command timed out after " + timeout + " seconds.")
+                    process.waitFor(2, TimeUnit.SECONDS)
+                    val partialOutput = try {
+                        outputTask.get(2, TimeUnit.SECONDS)
+                    } catch (_: Exception) {
+                        CommandOutput("", false)
+                    }
+                    LinuxCommandResult(
+                        partialOutput.text,
+                        null,
+                        partialOutput.truncated,
+                        "Linux command timed out after " + timeout + " seconds."
+                    )
                 } else {
                     val output = outputTask.get(2, TimeUnit.SECONDS)
                     LinuxCommandResult(output.text, process.exitValue(), output.truncated)
