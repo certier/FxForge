@@ -95,6 +95,66 @@ class WorkspaceSyncPlannerTest {
         assertEquals("same-new-value", plan.baselineAfter?.get("README.md"))
     }
 
+    @Test
+    fun privateChoiceDeletesTheCurrentStorageVersionNotTheOldBaseline() {
+        val expected = ProjectWorkspaceSync.expectedHashForAction(
+            action = WorkspaceSyncAction.DELETE_FROM_STORAGE,
+            path = "src/Main.kt",
+            baseline = mapOf("src/Main.kt" to "base"),
+            privateFiles = emptyMap(),
+            storageFiles = mapOf("src/Main.kt" to "external-edit")
+        )
+        assertEquals("external-edit", expected)
+    }
+
+    @Test
+    fun storageChoiceDeletesTheCurrentPrivateVersionNotTheOldBaseline() {
+        val expected = ProjectWorkspaceSync.expectedHashForAction(
+            action = WorkspaceSyncAction.DELETE_FROM_PRIVATE,
+            path = "src/Main.kt",
+            baseline = mapOf("src/Main.kt" to "base"),
+            privateFiles = mapOf("src/Main.kt" to "local-edit"),
+            storageFiles = emptyMap()
+        )
+        assertEquals("local-edit", expected)
+    }
+
+    @Test
+    fun deleteActionReturnsNoExpectedHashWhenTargetAlreadyDisappeared() {
+        val expected = ProjectWorkspaceSync.expectedHashForAction(
+            action = WorkspaceSyncAction.DELETE_FROM_STORAGE,
+            path = "src/Main.kt",
+            baseline = mapOf("src/Main.kt" to "base"),
+            privateFiles = emptyMap(),
+            storageFiles = emptyMap()
+        )
+        assertNull(expected)
+    }
+
+    @Test
+    fun copyActionsVerifyTheCurrentSourceHash() {
+        assertEquals(
+            "storage-current",
+            ProjectWorkspaceSync.expectedHashForAction(
+                WorkspaceSyncAction.COPY_TO_PRIVATE,
+                "README.md",
+                baseline = mapOf("README.md" to "base"),
+                privateFiles = mapOf("README.md" to "private-current"),
+                storageFiles = mapOf("README.md" to "storage-current")
+            )
+        )
+        assertEquals(
+            "private-current",
+            ProjectWorkspaceSync.expectedHashForAction(
+                WorkspaceSyncAction.COPY_TO_STORAGE,
+                "README.md",
+                baseline = mapOf("README.md" to "base"),
+                privateFiles = mapOf("README.md" to "private-current"),
+                storageFiles = mapOf("README.md" to "storage-current")
+            )
+        )
+    }
+
     @Test(expected = IllegalArgumentException::class)
     fun rejectsParentTraversalPaths() {
         WorkspaceSyncPlanner.create(
