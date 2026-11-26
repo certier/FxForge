@@ -512,14 +512,15 @@ private fun HomeScreen(
     )
     val nextStep = when {
         !linuxState.installed -> "Install Debian Linux"
-        !sdkState.installed -> "Install Android SDK"
         !openCodeState.installed -> "Set up OpenCode"
+        !sdkState.installed -> "Install Android SDK"
         !workspaceState.selected -> "Choose project folder"
         else -> "Create your first project"
     }
     val nextDestination = when {
-        !linuxState.installed || !sdkState.installed -> Destination.ENVIRONMENT
+        !linuxState.installed -> Destination.ENVIRONMENT
         !openCodeState.installed -> Destination.OPENCODE
+        !sdkState.installed -> Destination.ENVIRONMENT
         else -> Destination.PROJECTS
     }
 
@@ -1949,7 +1950,7 @@ private fun EnvironmentScreen(padding: PaddingValues, linuxRuntimeManager: Linux
                     )
                     FilledTonalButton(
                         onClick = onOpenOpenCode,
-                        enabled = linuxState.installed && sdkState.installed,
+                        enabled = linuxState.installed,
                         modifier = Modifier.fillMaxWidth()
                     ) {
                         Text(if (openCodeState.installed) "Open OpenCode setup" else "Install and configure OpenCode")
